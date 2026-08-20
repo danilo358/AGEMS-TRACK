@@ -1,0 +1,153 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="header-actions no-print" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+    <div>
+        <h1>{{ titulo }}</h1>
+        <p style="color: var(--secondary)">Gerado em: {{ gerado_em }}</p>
+    </div>
+    <div style="display: flex; gap: 1rem;">
+        <a href="{{ url_for('exportar_relatorio', tipo=tipo) }}" class="btn" style="background: #0284c7; color: white; text-decoration: none; padding: 0.5rem 1rem; border-radius: 0.25rem; font-size: 0.9rem; display: flex; align-items: center; gap: 0.5rem;">
+            <i class="fa-solid fa-file-excel"></i> Exportar Excel
+        </a>
+        <button onclick="printReport()" class="btn btn-primary">
+            <i class="fa-solid fa-print"></i> Imprimir Relatório
+        </button>
+    </div>
+</div>
+
+{% if itens %}
+<div class="company-filter no-print" style="margin-bottom: 2rem;">
+    <details style="background: white; border: 1px solid #e2e8f0; border-radius: 0.75rem; overflow: hidden;">
+        <summary style="padding: 1rem 1.5rem; cursor: pointer; font-weight: 600; color: #1e293b; display: flex; justify-content: space-between; align-items: center; user-select: none; background: #f8fafc;">
+            <span><i class="fa-solid fa-filter"></i> Filtrar Empresas</span>
+            <span style="font-size: 0.8rem; color: var(--primary);">Clique para expandir/recolher</span>
+        </summary>
+        
+        <div style="padding: 1.5rem; border-top: 1px solid #e2e8f0;">
+            <div style="display: flex; flex-direction: column; gap: 1rem;">
+                <!-- Barra de Busca e Ações -->
+                <div style="display: flex; gap: 1rem; align-items: center;">
+                    <div style="position: relative; flex: 1;">
+                        <i class="fa-solid fa-search" style="position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: #94a3b8;"></i>
+                        <input type="text" id="companySearch" placeholder="Procurar empresa..." 
+                               style="width: 100%; padding: 0.6rem 1rem 0.6rem 2.5rem; border: 1px solid #cbd5e1; border-radius: 0.5rem; font-size: 0.9rem;"
+                               onkeyup="searchCompanies()">
+                    </div>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <button onclick="toggleAllCompanies(true)" class="btn" style="padding: 0.5rem 1rem; font-size: 0.8rem; background: #f1f5f9; border: 1px solid #cbd5e1; color: #475569;">Marcar Todas</button>
+                        <button onclick="toggleAllCompanies(false)" class="btn" style="padding: 0.5rem 1rem; font-size: 0.8rem; background: #f1f5f9; border: 1px solid #cbd5e1; color: #475569;">Desmarcar Todas</button>
+                    </div>
+                </div>
+
+                <!-- Lista de Empresas -->
+                <div id="companyList" style="max-height: 300px; overflow-y: auto; padding-right: 0.5rem; display: flex; flex-direction: column; gap: 0.2rem;">
+                    {% for empresa in itens.keys()|sort %}
+                    <label class="company-item" style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer; font-size: 0.9rem; color: #475569; padding: 0.5rem 0.75rem; border-radius: 0.4rem; transition: 0.2s;">
+                        <input type="checkbox" checked class="empresa-checkbox" data-empresa="{{ empresa }}" onchange="filterCompanies()">
+                        <span class="company-name-text">{{ empresa }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </details>
+</div>
+
+<style>
+    .company-item:hover { background: #f1f5f9; }
+    #companyList::-webkit-scrollbar { width: 6px; }
+    #companyList::-webkit-scrollbar-track { background: #f1f5f9; }
+    #companyList::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+</style>
+{% endif %}
+
+<div class="report-section">
+    {% if not itens %}
+        <p style="text-align: center; padding: 2rem;">Nenhum veículo encontrado para este relatório.</p>
+    {% else %}
+        {% for empresa, veiculos in itens.items() %}
+            <div data-company-section="{{ empresa }}">
+                <div class="company-header">{{ empresa }}</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 10%;">Placa</th>
+                            <th style="width: 10%;">Prefixo</th>
+                            <th style="width: 40%;">Motivo / Justificativa</th>
+                            <th style="width: 40%;">Observação</th>
+                            {% if tipo == 'manutencao' %}
+                                <th style="width: 10%;">Offline</th>
+                            {% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for v in veiculos %}
+                        <tr>
+                            <td><strong>{{ v.placa }}</strong></td>
+                            <td>{{ v.prefixo or '-' }}</td>
+                            <td>{{ v.motivo }}</td>
+                            <td style="font-size: 0.8rem; color: #475569;">{{ v.observacao_mestre }}</td>
+                            {% if tipo == 'manutencao' %}
+                                <td>{{ v.dias_offline }} dias</td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endfor %}
+    {% endif %}
+</div>
+
+<div class="no-print" style="text-align: center; margin-top: 2rem; color: var(--secondary); font-size: 0.8rem;">
+    Relatório de Auditoria AGEMS - Track Land &copy; 2024
+</div>
+
+<script>
+    function filterCompanies() {
+        const checkboxes = document.querySelectorAll('.empresa-checkbox');
+        checkboxes.forEach(cb => {
+            const empresa = cb.getAttribute('data-empresa');
+            const sections = document.querySelectorAll(`[data-company-section="${empresa}"]`);
+            sections.forEach(sec => {
+                sec.style.display = cb.checked ? 'block' : 'none';
+            });
+        });
+    }
+
+    function searchCompanies() {
+        const input = document.getElementById('companySearch');
+        const filter = input.value.toUpperCase();
+        const items = document.querySelectorAll('.company-item');
+
+        items.forEach(item => {
+            const text = item.querySelector('.company-name-text').innerText;
+            if (text.toUpperCase().indexOf(filter) > -1) {
+                item.style.display = "";
+            } else {
+                item.style.display = "none";
+            }
+        });
+    }
+
+    function toggleAllCompanies(checked) {
+        const checkboxes = document.querySelectorAll('.empresa-checkbox');
+        // Apenas marca/desmarca os que estão VISÍVEIS (se houver busca ativa) 
+        // ou todos se não houver busca? O usuário disse:
+        // "quando voltar o resto continua marcado"
+        // Vou fazer com que toggleAll afete apenas os visíveis se houver filtro, 
+        // ou todos se estiver limpo.
+        const searchInput = document.getElementById('companySearch');
+        const isSearching = searchInput.value.length > 0;
+
+        checkboxes.forEach(cb => {
+            const item = cb.closest('.company-item');
+            if (!isSearching || item.style.display !== "none") {
+                cb.checked = checked;
+            }
+        });
+        filterCompanies();
+    }
+</script>
+{% endblock %}

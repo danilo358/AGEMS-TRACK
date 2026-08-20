@@ -1,0 +1,158 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div style="margin-bottom: 2rem;">
+    <h1>Dashboard Operacional</h1>
+    <p style="color: var(--secondary)">Bem-vindo, {{ email }}</p>
+</div>
+
+<div class="stats-grid">
+    <div class="stat-card" style="grid-column: 1 / -1; background: #e0f2fe; border: 1px solid #bae6fd; margin-bottom: 1rem;">
+        <div style="font-size: 0.8rem; color: #0369a1; margin-bottom: 0.5rem; text-align: center; font-weight: bold;">VEÍCULOS ATIVOS E COM VISTORIA EM DIA</div>
+        <div style="display: flex; justify-content: space-around; text-align: center;">
+            <div>
+                <div style="font-size: 1.8rem; font-weight: bold; color: #0284c7;">{{ dados.get('stats', {}).get('ativos_vistoria_total', 0) }}</div>
+                <div style="font-size: 0.8rem; color: #0369a1;">Total</div>
+            </div>
+            <div>
+                <div style="font-size: 1.8rem; font-weight: bold; color: #059669;">{{ dados.get('stats', {}).get('ativos_vistoria_com_rastreador', 0) }}</div>
+                <div style="font-size: 0.8rem; color: #047857;">Com Rastreador</div>
+            </div>
+            <div>
+                <div style="font-size: 1.8rem; font-weight: bold; color: #dc2626;">{{ dados.get('stats', {}).get('ativos_vistoria_sem_rastreador', 0) }}</div>
+                <div style="font-size: 0.8rem; color: #b91c1c;">Sem Rastreador</div>
+            </div>
+        </div>
+        <div style="text-align: center; margin-top: 1rem; border-top: 1px solid #bae6fd; padding-top: 1rem;">
+            <a href="{{ url_for('exportar_ativos') }}" class="btn" style="background: #0284c7; color: white; text-decoration: none; padding: 0.5rem 1rem; border-radius: 0.25rem; font-size: 0.8rem;"><i class="fa-solid fa-file-excel"></i> Exportar para Excel</a>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div style="font-size: 0.8rem; color: var(--secondary); margin-bottom: 0.5rem;">INSTALAÇÃO</div>
+        <div style="font-size: 1.8rem; font-weight: bold;">{{ dados.get('stats', {}).get('instalacao', 0) }}</div>
+        <a href="{{ url_for('relatorio', tipo='instalacao') }}" style="font-size: 0.7rem; color: var(--primary); text-decoration: none; margin-top: 0.5rem; display: block;">Ver Detalhes</a>
+    </div>
+    <div class="stat-card manutencao">
+        <div style="font-size: 0.8rem; color: var(--secondary); margin-bottom: 0.5rem;">MANUTENÇÃO</div>
+        <div style="font-size: 1.8rem; font-weight: bold;">{{ dados.get('stats', {}).get('manutencao', 0) }}</div>
+        <a href="{{ url_for('relatorio', tipo='manutencao') }}" style="font-size: 0.7rem; color: var(--primary); text-decoration: none; margin-top: 0.5rem; display: block;">Ver Detalhes</a>
+    </div>
+    <div class="stat-card desinstalacao">
+        <div style="font-size: 0.8rem; color: var(--secondary); margin-bottom: 0.5rem;">DESINSTALAÇÃO</div>
+        <div style="font-size: 1.8rem; font-weight: bold;">{{ dados.get('stats', {}).get('desinstalacao', 0) }}</div>
+        <a href="{{ url_for('relatorio', tipo='desinstalacao') }}" style="font-size: 0.7rem; color: var(--primary); text-decoration: none; margin-top: 0.5rem; display: block;">Ver Detalhes</a>
+    </div>
+    <div class="stat-card">
+        <div style="font-size: 0.8rem; color: var(--secondary); margin-bottom: 0.5rem;">PLACAS DUPLICADAS</div>
+        <div style="font-size: 1.8rem; font-weight: bold;">{{ dados.get('stats', {}).get('duplicadas', 0) }}</div>
+        <a href="{{ url_for('relatorio', tipo='duplicadas') }}" style="font-size: 0.7rem; color: var(--primary); text-decoration: none; margin-top: 0.5rem; display: block;">Ver Detalhes</a>
+    </div>
+    <div class="stat-card">
+        <div style="font-size: 0.8rem; color: var(--secondary); margin-bottom: 0.5rem;">INATIVAÇÃO PENDENTE</div>
+        <div style="font-size: 1.8rem; font-weight: bold;">{{ dados.get('stats', {}).get('inativacao_pendente', 0) }}</div>
+        <a href="{{ url_for('relatorio', tipo='inativacao_pendente') }}" style="font-size: 0.7rem; color: var(--primary); text-decoration: none; margin-top: 0.5rem; display: block;">Ver Detalhes</a>
+    </div>
+</div>
+
+<div class="report-section" style="margin-bottom: 2rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <h3>Resumo por Empresa</h3>
+        <a href="{{ url_for('whatsapp') }}" class="btn btn-primary" style="background: #10b981; border: none; color: white; padding: 0.5rem 1rem; border-radius: 0.5rem; text-decoration: none;">
+            <i class="fa-brands fa-whatsapp"></i> Gerar Mensagens WhatsApp
+        </a>
+    </div>
+    
+    {% if dados.get('stats_por_empresa') %}
+    <div style="overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 0.5rem;">
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="background: #f8fafc; border-bottom: 1px solid #e2e8f0;">
+                    <th style="padding: 1rem; text-align: left; font-size: 0.9rem; color: #475569;">Empresa</th>
+                    <th style="padding: 1rem; text-align: center; font-size: 0.9rem; color: #475569;">Instalações</th>
+                    <th style="padding: 1rem; text-align: center; font-size: 0.9rem; color: #475569;">Manutenções</th>
+                    <th style="padding: 1rem; text-align: center; font-size: 0.9rem; color: #475569;">Desinstalações</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for emp, stats in dados.get('stats_por_empresa').items() %}
+                <tr style="border-bottom: 1px solid #e2e8f0;">
+                    <td style="padding: 1rem; font-size: 0.9rem; color: #1e293b; font-weight: 500;">{{ emp }}</td>
+                    <td style="padding: 1rem; text-align: center; font-size: 0.9rem; color: #0284c7; font-weight: bold;">{{ stats.instalacao }}</td>
+                    <td style="padding: 1rem; text-align: center; font-size: 0.9rem; color: #d97706; font-weight: bold;">{{ stats.manutencao }}</td>
+                    <td style="padding: 1rem; text-align: center; font-size: 0.9rem; color: #dc2626; font-weight: bold;">{{ stats.desinstalacao }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="color: var(--secondary); font-size: 0.9rem;">Nenhum dado disponível. Gere um relatório primeiro.</p>
+    {% endif %}
+</div>
+
+<div class="report-section">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+        <h3>Geração de Relatórios</h3>
+        <button id="btnGerar" onclick="iniciarGeracao()" class="btn btn-primary" {{ 'disabled' if status == 'running' }}>
+            <i class="fa-solid fa-sync"></i> Gerar Novo Relatório
+        </button>
+    </div>
+
+    <div id="statusContainer" style="display: {{ 'block' if status == 'running' else 'none' }};">
+        <div style="background: #e2e8f0; border-radius: 1rem; height: 10px; margin-bottom: 1rem; overflow: hidden;">
+            <div id="progressBar" style="background: var(--primary); height: 100%; width: 0%; transition: 0.5s;"></div>
+        </div>
+        <div id="logContent" style="background: #1e293b; color: #10b981; padding: 1rem; border-radius: 0.5rem; font-family: monospace; font-size: 0.8rem; max-height: 200px; overflow-y: auto;">
+            {% for line in log %}
+                <div>> {{ line }}</div>
+            {% endfor %}
+        </div>
+    </div>
+
+    {% if dados.gerado_em %}
+    <div style="margin-top: 1.5rem; padding: 1rem; background: #f8fafc; border-radius: 0.5rem; font-size: 0.9rem;">
+        <i class="fa-solid fa-circle-check" style="color: var(--success)"></i> Último relatório concluído em: <strong>{{ dados.gerado_em }}</strong>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+    function iniciarGeracao() {
+        document.getElementById('btnGerar').disabled = true;
+        document.getElementById('statusContainer').style.display = 'block';
+        
+        fetch('/gerar', { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+                checkStatus();
+            });
+    }
+
+    function checkStatus() {
+        fetch('/status')
+            .then(res => res.json())
+            .then(data => {
+                const logContent = document.getElementById('logContent');
+                logContent.innerHTML = data.log.map(line => `<div>> ${line}</div>`).join('');
+                logContent.scrollTop = logContent.scrollHeight;
+                
+                // Simulação de progresso baseada no log
+                let prog = (data.log.length / 10) * 100;
+                if (prog > 100) prog = 100;
+                document.getElementById('progressBar').style.width = prog + '%';
+
+                if (data.status === 'running') {
+                    setTimeout(checkStatus, 2000);
+                } else if (data.status === 'done') {
+                    window.location.reload();
+                } else if (data.status === 'error') {
+                    alert('Erro na geração: ' + data.error);
+                }
+            });
+    }
+
+    {% if status == 'running' %}
+        checkStatus();
+    {% endif %}
+</script>
+{% endblock %}

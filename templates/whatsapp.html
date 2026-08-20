@@ -1,0 +1,79 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="header-actions no-print" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+    <div>
+        <h1>Mensagens WhatsApp</h1>
+        <p style="color: var(--secondary)">Selecione a empresa para copiar o texto pronto.</p>
+    </div>
+    <div>
+        <a href="{{ url_for('dashboard') }}" class="btn" style="background: #e2e8f0; color: #475569; text-decoration: none; padding: 0.5rem 1rem; border-radius: 0.5rem; font-size: 0.9rem;">
+            <i class="fa-solid fa-arrow-left"></i> Voltar ao Dashboard
+        </a>
+    </div>
+</div>
+
+<div style="display: flex; gap: 2rem; align-items: flex-start; flex-wrap: wrap;">
+    <!-- Lista de empresas -->
+    <div style="flex: 1; min-width: 300px; background: white; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 1rem; max-height: 600px; overflow-y: auto;">
+        <h3 style="margin-bottom: 1rem; font-size: 1.1rem; color: #1e293b;">Empresas Pendentes</h3>
+        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+            {% for emp in empresas %}
+            <button onclick="mostrarMensagem('{{ loop.index }}')" class="btn-empresa" id="btn-{{ loop.index }}" style="text-align: left; padding: 0.8rem; border: 1px solid #e2e8f0; border-radius: 0.4rem; background: #f8fafc; cursor: pointer; color: #334155; font-size: 0.9rem; transition: 0.2s;">
+                {{ emp }}
+            </button>
+            {% endfor %}
+            {% if not empresas %}
+            <p style="color: var(--secondary); font-size: 0.9rem;">Nenhuma empresa com serviços pendentes identificada. Verifique se o relatório já foi gerado no Dashboard.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Área da Mensagem -->
+    <div style="flex: 2; min-width: 400px; background: white; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 1.5rem;">
+        <h3 style="margin-bottom: 1rem; font-size: 1.1rem; color: #1e293b;">Texto da Mensagem</h3>
+        
+        <textarea id="texto-mensagem" style="width: 100%; height: 350px; padding: 1rem; border: 1px solid #cbd5e1; border-radius: 0.5rem; font-family: monospace; font-size: 0.9rem; color: #334155; resize: vertical; margin-bottom: 1rem;" readonly>Selecione uma empresa à esquerda...</textarea>
+        
+        <button onclick="copiarMensagem()" class="btn btn-primary" style="background: #10b981; border: none; width: 100%; padding: 0.8rem; font-size: 1rem; border-radius: 0.5rem; font-weight: bold; transition: 0.2s; cursor: pointer; color: white;">
+            <i class="fa-regular fa-copy"></i> Copiar Texto
+        </button>
+    </div>
+</div>
+
+<script>
+    const mensagens = {
+        {% for emp, msg in mensagens.items() %}
+        "{{ loop.index }}": {{ msg | tojson }},
+        {% endfor %}
+    };
+
+    function mostrarMensagem(index) {
+        document.getElementById('texto-mensagem').value = mensagens[index];
+        
+        // Destacar o botão clicado
+        document.querySelectorAll('.btn-empresa').forEach(btn => {
+            btn.style.background = '#f8fafc';
+            btn.style.borderColor = '#e2e8f0';
+            btn.style.fontWeight = 'normal';
+        });
+        const btnAtivo = document.getElementById('btn-' + index);
+        btnAtivo.style.background = '#e0f2fe';
+        btnAtivo.style.borderColor = '#38bdf8';
+        btnAtivo.style.fontWeight = 'bold';
+    }
+
+    function copiarMensagem() {
+        const textarea = document.getElementById('texto-mensagem');
+        if (!textarea.value || textarea.value.startsWith("Selecione")) {
+            alert("Selecione uma empresa primeiro.");
+            return;
+        }
+        
+        textarea.select();
+        document.execCommand('copy');
+        
+        alert("Mensagem copiada para a área de transferência!");
+    }
+</script>
+{% endblock %}

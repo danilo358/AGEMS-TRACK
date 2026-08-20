@@ -1,0 +1,95 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="header-actions">
+    <div>
+        <h1>Empresas e Responsáveis</h1>
+        <p style="color: var(--secondary)">Gerencie os responsáveis pelo contato de cada empresa para as mensagens de WhatsApp.</p>
+    </div>
+</div>
+
+<div class="card" style="padding: 1.5rem; overflow-x: auto;">
+    <table class="data-table" style="width: 100%; border-collapse: collapse;">
+        <thead>
+            <tr>
+                <th style="text-align: left; padding: 1rem; border-bottom: 2px solid #e2e8f0; color: #475569;">Empresa</th>
+                <th style="text-align: left; padding: 1rem; border-bottom: 2px solid #e2e8f0; color: #475569;">Título</th>
+                <th style="text-align: left; padding: 1rem; border-bottom: 2px solid #e2e8f0; color: #475569;">Nome do Responsável</th>
+                <th style="text-align: center; padding: 1rem; border-bottom: 2px solid #e2e8f0; color: #475569;">Ações</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for empresa in empresas %}
+            {% set resp = resp_map.get(empresa) %}
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 1rem; color: #334155; font-weight: 500;">
+                    {{ empresa }}
+                </td>
+                <td style="padding: 0.5rem 1rem;">
+                    <select id="titulo-{{ loop.index }}" class="input" style="padding: 0.5rem; border: 1px solid #cbd5e1; border-radius: 0.25rem; background: white;">
+                        <option value="Desconhecido" {% if not resp or resp.titulo == 'Desconhecido' %}selected{% endif %}>Desconhecido</option>
+                        <option value="Sr" {% if resp and resp.titulo == 'Sr' %}selected{% endif %}>Sr.</option>
+                        <option value="Sra" {% if resp and resp.titulo == 'Sra' %}selected{% endif %}>Sra.</option>
+                    </select>
+                </td>
+                <td style="padding: 0.5rem 1rem;">
+                    <input type="text" id="nome-{{ loop.index }}" class="input" style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e1; border-radius: 0.25rem;" value="{{ resp.nome if resp and resp.nome else '' }}" placeholder="Nome do responsável">
+                </td>
+                <td style="padding: 0.5rem 1rem; text-align: center;">
+                    <button onclick="salvarResponsavel('{{ empresa }}', {{ loop.index }})" class="btn btn-primary" style="padding: 0.5rem 1rem; border: none; border-radius: 0.25rem; background: #3b82f6; color: white; cursor: pointer; font-weight: 500;">
+                        <i class="fa-solid fa-save"></i> Salvar
+                    </button>
+                    <span id="status-{{ loop.index }}" style="margin-left: 0.5rem; font-size: 0.9rem; color: #10b981; display: none;"><i class="fa-solid fa-check"></i></span>
+                </td>
+            </tr>
+            {% endfor %}
+            {% if not empresas %}
+            <tr>
+                <td colspan="4" style="text-align: center; padding: 2rem; color: #64748b;">Nenhuma empresa encontrada na base de veículos.</td>
+            </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+    function salvarResponsavel(empresa, index) {
+        const titulo = document.getElementById('titulo-' + index).value;
+        const nome = document.getElementById('nome-' + index).value;
+        const btn = document.querySelector(`button[onclick="salvarResponsavel('${empresa}', ${index})"]`);
+        const statusIcon = document.getElementById('status-' + index);
+        
+        btn.disabled = true;
+        btn.style.opacity = '0.7';
+
+        const formData = new FormData();
+        formData.append('empresa', empresa);
+        formData.append('titulo', titulo);
+        formData.append('nome', nome);
+
+        fetch("{{ url_for('empresas_save') }}", {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.ok) {
+                statusIcon.style.display = 'inline-block';
+                setTimeout(() => {
+                    statusIcon.style.display = 'none';
+                }, 2000);
+            } else {
+                alert("Erro ao salvar.");
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert("Erro ao salvar. Verifique o console.");
+        })
+        .finally(() => {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+        });
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,260 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="dashboard-header">
+    <h1><i class="fa-solid fa-route"></i> Roteirização e Integração SystemSat</h1>
+    <p style="color: #94a3b8; font-size: 0.9rem;">Gere ou importe rotas e envie para a GlobalBus.</p>
+</div>
+
+<div class="stats-container" style="display: block; background: #1e293b; padding: 20px; border-radius: 8px;">
+
+    <div class="tabs" style="margin-bottom: 20px; border-bottom: 1px solid #334155;">
+        <button class="tab-btn active" onclick="switchTab('monitora')" id="btn-monitora"
+            style="background: none; border: none; color: #fff; padding: 10px 20px; cursor: pointer; border-bottom: 2px solid #3b82f6; font-size: 1rem;">Gerar
+            via Monitora</button>
+        <button class="tab-btn" onclick="switchTab('kml')" id="btn-kml"
+            style="background: none; border: none; color: #94a3b8; padding: 10px 20px; cursor: pointer; font-size: 1rem;">Importar
+            KML</button>
+    </div>
+
+    <!-- ABA MONITORA -->
+    <div id="tab-monitora" class="tab-content" style="display: block;">
+        <form id="form-monitora" style="display: flex; flex-direction: column; gap: 15px;">
+            <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                <div style="flex: 1; min-width: 250px;">
+                    <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Pasta</label>
+                    <select id="select-pasta" class="search-input" style="width: 100%;" required>
+                        <option value="">Carregando pastas...</option>
+                    </select>
+                </div>
+                <div style="flex: 1; min-width: 250px;">
+                    <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Linha</label>
+                    <select id="select-linha" class="search-input" style="width: 100%;" disabled required>
+                        <option value="">Selecione a Pasta primeiro</option>
+                    </select>
+                </div>
+                <div style="flex: 1; min-width: 150px;">
+                    <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Sentido</label>
+                    <select id="select-sentido" class="search-input" style="width: 100%;" required>
+                        <option value="IDA">IDA</option>
+                        <option value="VOLTA">VOLTA</option>
+                    </select>
+                </div>
+            </div>
+
+            <div>
+                <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Distância entre Pontos Interpolados
+                    (Metros)</label>
+                <input type="number" id="distancia-monitora" class="search-input" style="width: 200px;" value="200"
+                    min="50" required>
+            </div>
+
+            <button type="submit" class="generate-btn" style="width: max-content; padding: 10px 20px;"><i
+                    class="fa-solid fa-play"></i> Gerar e Enviar Rota</button>
+        </form>
+    </div>
+
+    <!-- ABA KML -->
+    <div id="tab-kml" class="tab-content" style="display: none;">
+        <form id="form-kml" style="display: flex; flex-direction: column; gap: 15px;">
+            <div>
+                <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Arquivo KML</label>
+                <input type="file" id="arquivo-kml" accept=".kml" class="search-input" style="width: 100%;" required>
+            </div>
+
+            <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                <div style="flex: 1; min-width: 200px;">
+                    <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Nome da Rota (RouteName)</label>
+                    <input type="text" id="kml-nome" class="search-input" style="width: 100%;"
+                        placeholder="Ex: PARANHOS - AMAMBAI" required>
+                </div>
+                <div style="flex: 1; min-width: 200px;">
+                    <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Empresa Origem
+                        (ClientBusIntegrationCode)</label>
+                    <input type="text" id="kml-empresa" class="search-input" style="width: 100%;"
+                        placeholder="ID Integração Empresa" required>
+                </div>
+                <div style="flex: 1; min-width: 150px;">
+                    <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Direction (IdDirection)</label>
+                    <select id="kml-direction" class="search-input" style="width: 100%;" required>
+                        <option value="1">IDA (1)</option>
+                        <option value="2">VOLTA (2)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div>
+                <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Distância entre Pontos Interpolados
+                    (Metros)</label>
+                <input type="number" id="distancia-kml" class="search-input" style="width: 200px;" value="50" min="10"
+                    required>
+            </div>
+
+            <button type="submit" class="generate-btn" style="width: max-content; padding: 10px 20px;"><i
+                    class="fa-solid fa-upload"></i> Importar e Enviar KML</button>
+        </form>
+    </div>
+
+    <!-- LOG STATUS -->
+    <div id="status-container" style="margin-top: 30px; display: none;">
+        <h3 style="color: #fff; margin-bottom: 10px;"><i class="fa-solid fa-terminal"></i> Status</h3>
+        <div id="status-log"
+            style="background: #0f172a; padding: 15px; border-radius: 5px; height: 200px; overflow-y: auto; font-family: monospace; color: #34d399; font-size: 0.9rem;">
+        </div>
+    </div>
+
+</div>
+
+<script>
+    function switchTab(tab) {
+        document.getElementById('tab-monitora').style.display = tab === 'monitora' ? 'block' : 'none';
+        document.getElementById('tab-kml').style.display = tab === 'kml' ? 'block' : 'none';
+
+        document.getElementById('btn-monitora').style.color = tab === 'monitora' ? '#fff' : '#94a3b8';
+        document.getElementById('btn-monitora').style.borderBottom = tab === 'monitora' ? '2px solid #3b82f6' : 'none';
+
+        document.getElementById('btn-kml').style.color = tab === 'kml' ? '#fff' : '#94a3b8';
+        document.getElementById('btn-kml').style.borderBottom = tab === 'kml' ? '2px solid #3b82f6' : 'none';
+    }
+
+    function addLog(msg, isError = false) {
+        const logBox = document.getElementById('status-log');
+        document.getElementById('status-container').style.display = 'block';
+        const color = isError ? '#ef4444' : '#34d399';
+        logBox.innerHTML += `<div style="color: ${color};">> ${msg}</div>`;
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    // Carregar pastas
+    window.onload = function () {
+        fetch('{{ url_for("api_pastas") }}')
+            .then(r => r.json())
+            .then(data => {
+                const sel = document.getElementById('select-pasta');
+                sel.innerHTML = '<option value="">Selecione a Pasta</option>';
+                data.forEach(p => {
+                    const empresaNome = p.empresa ? (p.empresa.nomeFantasia || p.empresa.razaoSocial) : 'Desconhecida';
+                    // Salvar o nome da empresa como dataset para usar no Global
+                    sel.innerHTML += `<option value="${p.id}" data-empresa="${empresaNome}">${p.numero} - ${empresaNome}</option>`;
+                });
+            }).catch(e => {
+                const sel = document.getElementById('select-pasta');
+                sel.innerHTML = '<option value="">Erro ao carregar pastas</option>';
+            });
+    }
+
+    // Ao selecionar pasta, carregar linhas da pasta
+    document.getElementById('select-pasta').addEventListener('change', function () {
+        const pastaId = this.value;
+        const selLinha = document.getElementById('select-linha');
+        if (!pastaId) {
+            selLinha.innerHTML = '<option value="">Selecione a Pasta primeiro</option>';
+            selLinha.disabled = true;
+            return;
+        }
+
+        selLinha.disabled = false;
+        selLinha.innerHTML = '<option value="">Carregando linhas...</option>';
+
+        fetch('{{ url_for("api_linhas") }}?pasta_id=' + pastaId)
+            .then(r => r.json())
+            .then(data => {
+                selLinha.innerHTML = '<option value="">Selecione a Linha</option>';
+                if (!data || data.length === 0) {
+                    selLinha.innerHTML = '<option value="">Nenhuma linha encontrada nesta pasta</option>';
+                    addLog('⚠️ Nenhuma linha encontrada para esta pasta. Verifique no Monitora se existem linhas cadastradas.', true);
+                } else {
+                    addLog(`✅ ${data.length} linha(s) encontrada(s) na pasta.`);
+                    data.forEach(l => {
+                        selLinha.innerHTML += `<option value="${l.id}">${l.numero || 'S/N'} - ${l.nome}</option>`;
+                    });
+                }
+            }).catch(e => {
+                selLinha.innerHTML = '<option value="">Erro ao carregar linhas</option>';
+                addLog('❌ Erro ao carregar linhas: ' + e.message, true);
+            });
+    });
+
+    // Envio Monitora
+    document.getElementById('form-monitora').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const btn = this.querySelector('button');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processando...';
+
+        const selPasta = document.getElementById('select-pasta');
+        const empresaNome = selPasta.options[selPasta.selectedIndex].getAttribute('data-empresa');
+
+        document.getElementById('status-log').innerHTML = '';
+        addLog('Iniciando integração de rota via Monitora...');
+        addLog('Aguarde, este processo pode levar alguns minutos...');
+
+        // Timeout de 5 minutos para não cancelar a requisição prematuramente
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 300000);
+
+        fetch('{{ url_for("api_gerar_rota") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+            body: JSON.stringify({
+                pasta_id: document.getElementById('select-pasta').value,
+                linha_id: document.getElementById('select-linha').value,
+                sentido: document.getElementById('select-sentido').value,
+                distancia: document.getElementById('distancia-monitora').value,
+                empresa_nome: empresaNome
+            })
+        }).then(r => r.json()).then(data => {
+            clearTimeout(timeoutId);
+            if (data.error) addLog('Erro: ' + data.error, true);
+            else {
+                addLog('SUCESSO! ' + (data.msg || 'Rota gerada e enviada com sucesso.'));
+            }
+        }).catch(err => {
+            clearTimeout(timeoutId);
+            if (err.name === 'AbortError') {
+                addLog('Erro: A requisição excedeu o tempo limite de 5 minutos. Verifique o terminal do servidor para mais detalhes.', true);
+            } else {
+                addLog('Erro de conexão: ' + err.message + '. Verifique se o servidor Flask está rodando.', true);
+            }
+        }).finally(() => {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-play"></i> Gerar e Enviar Rota';
+        });
+    });
+
+    // Envio KML
+    document.getElementById('form-kml').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const btn = this.querySelector('button');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processando...';
+
+        document.getElementById('status-log').innerHTML = '';
+        addLog('Iniciando processamento de KML...');
+
+        const fileInput = document.getElementById('arquivo-kml');
+        const formData = new FormData();
+        formData.append('arquivo', fileInput.files[0]);
+        formData.append('nome', document.getElementById('kml-nome').value);
+        formData.append('empresa', document.getElementById('kml-empresa').value);
+        formData.append('direction', document.getElementById('kml-direction').value);
+        formData.append('distancia', document.getElementById('distancia-kml').value);
+
+        fetch('{{ url_for("api_enviar_kml") }}', {
+            method: 'POST',
+            body: formData
+        }).then(r => r.json()).then(data => {
+            if (data.error) addLog('Erro: ' + data.error, true);
+            else {
+                addLog('SUCESSO! ' + (data.msg || 'Rota do KML enviada com sucesso.'));
+            }
+        }).catch(err => {
+            addLog('Erro interno: ' + err, true);
+        }).finally(() => {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-upload"></i> Importar e Enviar KML';
+        });
+    });
+</script>
+{% endblock %}

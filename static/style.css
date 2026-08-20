@@ -1,0 +1,120 @@
+:root {
+    --primary: #2563eb;
+    --secondary: #64748b;
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --background: #f8fafc;
+    --sidebar: #1e293b;
+    --card: #ffffff;
+    --text: #1e293b;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+
+body { background: var(--background); display: flex; min-height: 100vh; color: var(--text); }
+
+/* Sidebar Navigation */
+.sidebar {
+    width: 260px;
+    background: var(--sidebar);
+    color: white;
+    display: flex;
+    flex-direction: column;
+    padding: 2rem 1rem;
+    position: fixed;
+    height: 100vh;
+}
+
+.sidebar h2 { margin-bottom: 2rem; font-size: 1.5rem; text-align: center; color: #38bdf8; }
+
+.nav-link {
+    display: flex;
+    align-items: center;
+    padding: 0.8rem 1rem;
+    color: #cbd5e1;
+    text-decoration: none;
+    border-radius: 0.5rem;
+    margin-bottom: 0.5rem;
+    transition: 0.3s;
+}
+
+.nav-link:hover, .nav-link.active {
+    background: #334155;
+    color: white;
+}
+
+/* Main Content */
+.main-content { margin-left: 260px; flex: 1; padding: 2rem; }
+
+/* Dashboard Cards */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.stat-card {
+    background: var(--card);
+    padding: 1.5rem;
+    border-radius: 1rem;
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    border-left: 4px solid var(--primary);
+}
+
+.stat-card.manutencao { border-left-color: var(--warning); }
+.stat-card.desinstalacao { border-left-color: var(--danger); }
+
+/* Relatório Table */
+.report-section { background: white; border-radius: 1rem; padding: 1.5rem; margin-bottom: 2rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
+
+.company-header {
+    background: #f1f5f9;
+    padding: 0.5rem 1rem;
+    font-weight: bold;
+    border-left: 4px solid var(--primary);
+    margin: 1rem 0 0.5rem 0;
+}
+
+table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+th { text-align: left; padding: 0.8rem; border-bottom: 2px solid #e2e8f0; color: var(--secondary); font-size: 0.85rem; }
+td { padding: 0.8rem; border-bottom: 1px solid #f1f5f9; font-size: 0.9rem; }
+
+/* PRINT OPTIMIZATION */
+@media print {
+    .sidebar, .btn-gerar, .btn-print, .no-print { display: none !important; }
+    .main-content { margin: 0; padding: 0; }
+    body { background: white; }
+    
+    .company-header { 
+        background: #eee !important; 
+        -webkit-print-color-adjust: exact; 
+        margin-top: 10px;
+        padding: 4px 8px;
+    }
+    
+    td, th { 
+        padding: 4px 8px !important; /* REDUÇÃO DO ESPAÇAMENTO */
+        font-size: 10pt !important;
+        border-bottom: 1px solid #ddd !important;
+    }
+    
+    .report-section { box-shadow: none; padding: 0; margin: 0; }
+    
+    h1, h2 { font-size: 14pt; margin-bottom: 10px; }
+    
+    @page { margin: 1cm; }
+}
+
+.btn {
+    padding: 0.6rem 1.2rem;
+    border-radius: 0.5rem;
+    border: none;
+    cursor: pointer;
+    font-weight: 600;
+    transition: 0.3s;
+}
+
+.btn-primary { background: var(--primary); color: white; }
+.btn-primary:hover { opacity: 0.9; }

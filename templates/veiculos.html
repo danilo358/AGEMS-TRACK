@@ -1,0 +1,82 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div style="margin-bottom: 2rem;">
+    <h1>Gestão de Veículos (Frota)</h1>
+    <p style="color: var(--secondary)">Visualize e edite informações permanentes da frota.</p>
+</div>
+
+<div class="report-section no-print">
+    <form action="{{ url_for('veiculos') }}" method="GET" style="display: flex; gap: 1rem;">
+        <input type="text" name="search" value="{{ search }}" placeholder="Buscar por Placa, Prefixo ou Empresa..." 
+               style="flex: 1; padding: 0.8rem; border-radius: 0.5rem; border: 1px solid #cbd5e1;">
+        <button type="submit" class="btn btn-primary">Pesquisar</button>
+        {% if search %}
+            <a href="{{ url_for('veiculos') }}" class="btn" style="background: #e2e8f0;">Limpar</a>
+        {% endif %}
+    </form>
+</div>
+
+<div class="report-section">
+    <table>
+        <thead>
+            <tr>
+                <th>Placa</th>
+                <th>Prefixo</th>
+                <th>Empresa</th>
+                <th>Últ. Comunicação</th>
+                <th style="text-align: center;">Precisa de Manutenção</th>
+                <th>Observação (Para Relatórios)</th>
+                <th class="no-print">Ação</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for v in veiculos %}
+            <tr>
+                <td><strong>{{ v.placa }}</strong></td>
+                <td>{{ v.prefixo or '-' }}</td>
+                <td style="font-size: 0.8rem;">{{ v.empresa }}</td>
+                <td style="font-size: 0.8rem;">{{ v.ultima_comunicacao or '-' }}</td>
+                <td style="text-align: center;">
+                    <input type="checkbox" id="manut-{{ v.placa }}" {% if v.manutencao_manual %}checked{% endif %} 
+                           onchange="salvarObs('{{ v.placa }}', false)" style="width: 18px; height: 18px; cursor: pointer;" title="Marcar/Desmarcar Manutenção">
+                </td>
+                <td>
+                    <textarea id="obs-{{ v.placa }}" style="width: 100%; border: none; background: #f8fafc; padding: 5px; font-size: 0.85rem;" 
+                              rows="2">{{ v.observacao }}</textarea>
+                </td>
+                <td class="no-print">
+                    <button onclick="salvarObs('{{ v.placa }}', true)" class="btn" style="background: var(--success); color: white; padding: 0.4rem 0.8rem;" title="Salvar">
+                        <i class="fa-solid fa-save"></i>
+                    </button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+    function salvarObs(placa, showAlert = true) {
+        const obs = document.getElementById('obs-' + placa).value;
+        const precisaManut = document.getElementById('manut-' + placa).checked;
+        const formData = new FormData();
+        formData.append('placa', placa);
+        formData.append('observacao', obs);
+        formData.append('precisa_manutencao', precisaManut);
+
+        fetch('/veiculos/save', {
+            method: 'POST',
+            body: formData
+        })
+        .then(res => res.json())
+        .then(data => {
+            if(data.ok) {
+                if(showAlert) alert('Informações salvas com sucesso!');
+            } else {
+                alert('Erro ao salvar.');
+            }
+        });
+    }
+</script>
+{% endblock %}

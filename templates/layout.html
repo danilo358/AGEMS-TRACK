@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGEMS Auditoria | Track Land</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    {% if session.logged_in %}
+    <div class="sidebar no-print">
+        <h2>TRACK LAND</h2>
+        <nav>
+            <a href="{{ url_for('dashboard') }}" class="nav-link {{ 'active' if request.endpoint == 'dashboard' }}">
+                <i class="fa-solid fa-gauge"></i> &nbsp; Dashboard
+            </a>
+            <a href="{{ url_for('veiculos') }}" class="nav-link {{ 'active' if request.endpoint == 'veiculos' }}">
+                <i class="fa-solid fa-bus"></i> &nbsp; Veículos
+            </a>
+            <a href="{{ url_for('roteirizacao') }}" class="nav-link {{ 'active' if request.endpoint == 'roteirizacao' }}">
+                <i class="fa-solid fa-route"></i> &nbsp; Roteirização
+            </a>
+            <a href="{{ url_for('relatorio', tipo='instalacao') }}" class="nav-link {{ 'active' if tipo == 'instalacao' }}">
+                <i class="fa-solid fa-tools"></i> &nbsp; Instalação
+            </a>
+            <a href="{{ url_for('relatorio', tipo='manutencao') }}" class="nav-link {{ 'active' if tipo == 'manutencao' }}">
+                <i class="fa-solid fa-wrench"></i> &nbsp; Manutenção
+            </a>
+            <a href="{{ url_for('relatorio', tipo='desinstalacao') }}" class="nav-link {{ 'active' if tipo == 'desinstalacao' }}">
+                <i class="fa-solid fa-trash-can"></i> &nbsp; Desinstalação
+            </a>
+            <a href="{{ url_for('relatorio', tipo='duplicadas') }}" class="nav-link {{ 'active' if tipo == 'duplicadas' }}">
+                <i class="fa-solid fa-copy"></i> &nbsp; Duplicadas
+            </a>
+            <a href="{{ url_for('relatorio', tipo='inativacao_pendente') }}" class="nav-link {{ 'active' if tipo == 'inativacao_pendente' }}">
+                <i class="fa-solid fa-hourglass-half"></i> &nbsp; Inat. Pendente
+            </a>
+            <a href="{{ url_for('empresas_lista') }}" class="nav-link {{ 'active' if request.endpoint == 'empresas_lista' }}">
+                <i class="fa-solid fa-building"></i> &nbsp; Empresas
+            </a>
+            <hr style="margin: 1rem 0; border: none; border-top: 1px solid #334155;">
+            <a href="{{ url_for('logout') }}" class="nav-link" style="color: #f87171;">
+                <i class="fa-solid fa-right-from-bracket"></i> &nbsp; Sair
+            </a>
+        </nav>
+    </div>
+    {% endif %}
+
+    <div class="main-content">
+        {% block content %}{% endblock %}
+    </div>
+
+    <script>
+        function printReport() {
+            window.print();
+        }
+    </script>
+</body>
+</html>

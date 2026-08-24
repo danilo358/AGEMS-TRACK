@@ -1,7 +1,7 @@
 import requests
 import re
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 import pandas as pd
 
 # =========================================================
@@ -111,30 +111,86 @@ def buscar_todos_veiculos(token):
         }
     return veiculos_mestre
 
-def buscar_empresas_regulares(token):
-    url_req = "https://www.monitora.ms.gov.br/req/"
+def buscar_empresas_com_pasta_valida(token):
     headers = {"content-type": "application/json", "authorization": f"Bearer {token}"}
-    payload = {
-        "operationName": "buscarEmpresasSemPaginacao",
-        "variables": {},
-        "query": "query buscarEmpresasSemPaginacao { buscarEmpresasSemPaginacao { ativo pessoaJuridica { razaoSocial } tiposEmpresas { descricao } } }"
-    }
-    print("Verificando empresas com operação REGULAR...")
-    res = requests.post(url_req, json=payload, headers=headers)
-    lista_empresas = res.json().get("data", {}).get("buscarEmpresasSemPaginacao", [])
+    url = "https://www.monitora.ms.gov.br/linha"
+    empresas_com_pasta = set()
+    page = 1
+    has_more = True
+    data_hoje = date.today()
     
-    empresas_regulares = set()
-    for emp in lista_empresas:
-        if not emp.get("ativo", False): continue
+    print("Verificando empresas com PASTA válida na AGEMS...")
+    while has_more:
+        payload = {
+            "operationName": "BuscarPastas_Linha",
+            "variables": {"filtros": {}, "page": float(page)},
+            "query": """query BuscarPastas_Linha($filtros: FiltroBuscarPastasInput, $page: Float) {
+              buscarPastas(filtros: $filtros, pageOptionsDto: {paginate: true, page: $page, take: 50}) {
+                data {
+                  id
+                  numero
+                  descricao
+                  empresa {
+                    nomeFantasia
+                    razaoSocial
+                  }
+                  ordemServicos {
+                    id
+                    numero
+                    vencimento
+                  }
+                }
+                meta
+              }
+            }"""
+        }
+        try:
+            res = requests.post(url, json=payload, headers=headers, timeout=30)
+            res.raise_for_status()
+            resposta = res.json()
+            buscar_pastas_node = resposta.get("data", {}).get("buscarPastas") or {}
+            pastas = buscar_pastas_node.get("data") or []
+            meta = buscar_pastas_node.get("meta") or {}
             
-        tipos = emp.get("tiposEmpresas") or []
-        for tipo in tipos:
-            if tipo.get("descricao", "").strip().upper() == "REGULAR":
-                razao_social = normalizar_nome(emp.get("pessoaJuridica", {}).get("razaoSocial"))
-                if razao_social: 
-                    empresas_regulares.add(razao_social)
+            if not pastas:
                 break
-    return empresas_regulares
+                
+            for pasta in pastas:
+                datas_validade = [
+                    os_item.get("vencimento")
+                    for os_item in pasta.get("ordemServicos") or []
+                ]
+                is_valida = False
+                for data_validade in datas_validade:
+                    if data_validade:
+                        try:
+                            if data_vistoria_valida(data_validade, data_hoje):
+                                is_valida = True
+                                break
+                        except (TypeError, ValueError):
+                            continue
+                                
+                if is_valida:
+                    emp_obj = pasta.get("empresa") or {}
+                    nome_empresa = emp_obj.get("razaoSocial") or emp_obj.get("nomeFantasia") or pasta.get("descricao")
+                    razao = normalizar_nome(nome_empresa)
+                    if razao:
+                        empresas_com_pasta.add(razao)
+                        
+            has_next = meta.get("hasNextPage") if isinstance(meta, dict) else False
+            page_count = meta.get("pageCount", 1) if isinstance(meta, dict) else 1
+            if has_next or (page < page_count):
+                page += 1
+            else:
+                has_more = False
+        except Exception as e:
+            print(f"Erro ao buscar pastas: {e}")
+            break
+            
+    return empresas_com_pasta
+
+def buscar_empresas_regulares(token):
+    return buscar_empresas_com_pasta_valida(token)
 
 def buscar_pedidos_desativacao(token):
     url_vistoria = "https://www.monitora.ms.gov.br/vistoria/"
@@ -198,7 +254,7 @@ if __name__ == "__main__":
     
     if t_agems and t_sys:
         veiculos = buscar_todos_veiculos(t_agems)
-        empresas_regulares = buscar_empresas_regulares(t_agems)
+        empresas_com_pasta = buscar_empresas_com_pasta_valida(t_agems)
         pedidos_desativacao = buscar_pedidos_desativacao(t_agems)
         rastreadores = buscar_posicoes_rastreadores(t_sys)
         
@@ -229,7 +285,7 @@ if __name__ == "__main__":
                     raise ValueError(f"Data de vistoria inválida para {placa}: {dados['vencimento_vistoria']!r}") from exc
                 
             is_monitora_ok = is_ativo and is_aprovado and has_vistoria
-            is_empresa_regular = empresa in empresas_regulares
+            is_empresa_pasta_ok = empresa in empresas_com_pasta
             
             motivo_desativacao = pedidos_desativacao.get(placa)
             is_desativado_ou_inativo = (not is_ativo) or (motivo_desativacao is not None)
@@ -251,16 +307,16 @@ if __name__ == "__main__":
             justificativa = ""
             if is_desativado_ou_inativo and has_tracker:
                 justificativa = f"DESINSTALAÇÃO: {motivo_desativacao if motivo_desativacao else 'Inativo no sistema AGEMS'}"
-            elif is_monitora_ok and is_empresa_regular and not has_tracker:
-                justificativa = "INSTALAÇÃO: OK na AGEMS e empresa Regular, mas sem rastreador"
+            elif is_monitora_ok and is_empresa_pasta_ok and not has_tracker:
+                justificativa = "INSTALAÇÃO: OK na AGEMS e empresa com pasta ativa, mas sem rastreador"
             elif is_monitora_ok and has_tracker and not is_desativado_ou_inativo:
                 dias_offline = (data_hoje_dt - rastreadores[placa]).days
                 if dias_offline >= 15:
                     justificativa = f"MANUTENÇÃO: Offline há {dias_offline} dias"
                 else:
                     justificativa = "SITUAÇÃO OK: Veículo com rastreador comunicando."
-            elif is_monitora_ok and not is_empresa_regular:
-                justificativa = "IGNORADO - Empresa suspensa/irregular na AGEMS"
+            elif is_monitora_ok and not is_empresa_pasta_ok:
+                justificativa = "IGNORADO - Empresa sem pasta ativa na AGEMS"
             else:
                 justificativa = "IGNORADO - Inativo ou faltando documento/vistoria, sem rastreador."
 

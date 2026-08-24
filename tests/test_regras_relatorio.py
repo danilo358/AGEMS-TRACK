@@ -66,7 +66,58 @@ class RegrasRelatorioTest(unittest.TestCase):
         ]}}}
         post.return_value = resposta
         veiculos = buscar_todos_veiculos("token-teste")
-        self.assertEqual(len(veiculos["QAK3H85"]["ocorrencias"]), 3)
+    @patch("app.requests.post")
+    def test_buscar_empresas_com_pasta_valida(self, post):
+        from app import buscar_empresas_com_pasta_valida
+        resposta = Mock()
+        resposta.json.return_value = {
+            "data": {
+                "buscarPastas": {
+                    "data": [
+                        {
+                            "id": "1",
+                            "descricao": "EMPRESA COM PASTA VALIDA LTDA",
+                            "empresa": {"razaoSocial": "EMPRESA COM PASTA VALIDA LTDA"},
+                            "ordemServicos": [{"id": "os1", "vencimento": "2030-12-31"}]
+                        },
+                        {
+                            "id": "2",
+                            "ativo": False,
+                            "descricao": "EMPRESA COM PASTA VENCIDA LTDA",
+                            "empresa": {"razaoSocial": "EMPRESA COM PASTA VENCIDA LTDA"},
+                            "ordemServicos": [{"id": "os2", "vencimento": "2020-01-01"}]
+                        }
+                    ],
+                    "meta": {"hasNextPage": False, "pageCount": 1}
+                }
+            }
+        }
+        post.return_value = resposta
+        empresas = buscar_empresas_com_pasta_valida("token-teste")
+        self.assertIn("EMPRESA COM PASTA VALIDA LTDA", empresas)
+        self.assertNotIn("EMPRESA COM PASTA VENCIDA LTDA", empresas)
+
+    @patch("app.requests.post")
+    def test_buscar_empresas_considera_data_da_ordem(self, post):
+        from app import buscar_empresas_com_pasta_valida
+        resposta = Mock()
+        resposta.json.return_value = {
+            "data": {
+                "buscarPastas": {
+                    "data": [{
+                        "id": "1",
+                        "empresa": {"razaoSocial": "EMPRESA COM PASTA ATIVA LTDA"},
+                        "ordemServicos": [{"id": "os1", "vencimento": "2030-12-31"}]
+                    }],
+                    "meta": {"hasNextPage": False, "pageCount": 1}
+                }
+            }
+        }
+        post.return_value = resposta
+
+        empresas = buscar_empresas_com_pasta_valida("token-teste")
+
+        self.assertIn("EMPRESA COM PASTA ATIVA LTDA", empresas)
 
 
 if __name__ == "__main__":

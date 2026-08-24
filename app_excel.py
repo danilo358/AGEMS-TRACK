@@ -1,7 +1,7 @@
 import requests
 import re
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 
 # =========================================================
 # FUNÇÕES DE UTILIDADE E LOGIN
@@ -97,25 +97,67 @@ def buscar_todos_veiculos(token):
         }
     return veiculos_mestre
 
-def buscar_empresas_regulares(token):
-    url_req = "https://www.monitora.ms.gov.br/req/"
+def buscar_empresas_com_pasta_valida(token):
     headers = {"content-type": "application/json", "authorization": f"Bearer {token}"}
-    payload = {
-        "operationName": "buscarEmpresasSemPaginacao",
-        "variables": {},
-        "query": "query buscarEmpresasSemPaginacao { buscarEmpresasSemPaginacao { pessoaJuridica { razaoSocial } empresaStatus { descricao } } }"
-    }
-
-    print("Verificando status de regularidade das transportadoras...")
-    res = requests.post(url_req, json=payload, headers=headers)
-    lista_empresas = res.json().get("data", {}).get("buscarEmpresasSemPaginacao", [])
+    url = "https://www.monitora.ms.gov.br/linha"
+    empresas_com_pasta = set()
+    page = 1
+    has_more = True
+    data_hoje = date.today()
     
-    empresas_regulares = set()
-    for emp in lista_empresas:
-        if emp.get("empresaStatus", {}).get("descricao", "").upper() == "REGULAR":
-            razao_social = normalizar_nome(emp.get("pessoaJuridica", {}).get("razaoSocial"))
-            if razao_social: empresas_regulares.add(razao_social)
-    return empresas_regulares
+    print("Verificando status de pastas das transportadoras...")
+    while has_more:
+        payload = {
+            "operationName": "BuscarPastas_Linha",
+            "variables": {"filtros": {}, "page": page},
+            "query": "query BuscarPastas_Linha($filtros: FiltroBuscarPastasInput, $page: Float) { buscarPastas(filtros: $filtros, pageOptionsDto: {paginate: true, page: $page, take: 100}) { data { id numero descricao dataValidade dataVencimento vencido ativo empresa { nomeFantasia razaoSocial } } meta { pageCount hasNextPage } } }"
+        }
+        try:
+            res = requests.post(url, json=payload, headers=headers, timeout=30)
+            res.raise_for_status()
+            resposta = res.json()
+            buscar_pastas_node = resposta.get("data", {}).get("buscarPastas") or {}
+            pastas = buscar_pastas_node.get("data") or []
+            meta = buscar_pastas_node.get("meta") or {}
+            
+            if not pastas:
+                break
+                
+            for pasta in pastas:
+                datas_validade = [
+                    os_item.get("vencimento")
+                    for os_item in pasta.get("ordemServicos") or []
+                ]
+                is_valida = False
+                for data_validade in datas_validade:
+                    if data_validade:
+                        try:
+                            if data_vistoria_valida(data_validade, data_hoje):
+                                is_valida = True
+                                break
+                        except (TypeError, ValueError):
+                            continue
+
+                if is_valida:
+                    emp_obj = pasta.get("empresa") or {}
+                    razao = normalizar_nome(emp_obj.get("razaoSocial") or emp_obj.get("nomeFantasia"))
+                    if razao:
+                        empresas_com_pasta.add(razao)
+                        
+            has_next = meta.get("hasNextPage")
+            page_count = meta.get("pageCount", 1)
+            if has_next or (page < page_count):
+                page += 1
+            else:
+                has_more = False
+        except Exception as e:
+            print(f"Erro ao buscar pastas: {e}")
+            break
+            
+    return empresas_com_pasta
+
+def buscar_empresas_regulares(token):
+    return buscar_empresas_com_pasta_valida(token)
 
 def buscar_pedidos_desativacao(token):
     url_vistoria = "https://www.monitora.ms.gov.br/vistoria/"
@@ -183,7 +225,7 @@ if __name__ == "__main__":
     
     if t_agems and t_sys:
         veiculos = buscar_todos_veiculos(t_agems)
-        empresas_regulares = buscar_empresas_regulares(t_agems)
+        empresas_com_pasta = buscar_empresas_com_pasta_valida(t_agems)
         pedidos_desativacao = buscar_pedidos_desativacao(t_agems)
         rastreadores = buscar_posicoes_rastreadores(t_sys)
         
@@ -210,7 +252,7 @@ if __name__ == "__main__":
                     raise ValueError(f"Data de vistoria inválida para {placa}: {dados['vencimento_vistoria']!r}") from exc
                 
             is_monitora_ok = is_ativo and is_aprovado and has_vistoria
-            is_empresa_regular = empresa in empresas_regulares
+            is_empresa_pasta_ok = empresa in empresas_com_pasta
             
             motivo_desativacao = pedidos_desativacao.get(placa)
             is_desativado_ou_inativo = (not is_ativo) or (motivo_desativacao is not None)
@@ -226,7 +268,7 @@ if __name__ == "__main__":
 
             # REGRA 2: INSTALAÇÃO
             if is_monitora_ok and not has_tracker and not is_desativado_ou_inativo:
-                if is_empresa_regular:
+                if is_empresa_pasta_ok:
                     rel_instalacao.append(base)
                 continue
 
@@ -241,7 +283,7 @@ if __name__ == "__main__":
         print("="*70)
         print("📊 DASHBOARD DE OPERAÇÕES TRACK LAND / AGEMS")
         print("="*70)
-        print(f"🛠️  VEÍCULOS PARA INSTALAÇÃO (Empresa Regular, Sem rastreador): {len(rel_instalacao)}")
+        print(f"🛠️  VEÍCULOS PARA INSTALAÇÃO (Empresa com Pasta Válida, Sem rastreador): {len(rel_instalacao)}")
         print(f"⚠️  VEÍCULOS PARA MANUTENÇÃO (OK mas >15 dias offline): {len(rel_manutencao)}")
         print(f"🛑 VEÍCULOS PARA DESINSTALAÇÃO (Inativos/Desativados com rastreador): {len(rel_desinstalacao)}")
         print("="*70)

@@ -1,7 +1,7 @@
 import requests
 import re
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, make_response
 import io
 import pandas as pd
@@ -168,15 +168,15 @@ def normalizar_placa_mercosul(placa):
     placa = limpar_placa(placa)
     if len(placa) != 7:
         return placa
-    
+
     mapa = {'A': '0', 'B': '1', 'C': '2', 'D': '3', 'E': '4', 'F': '5', 'G': '6', 'H': '7', 'I': '8', 'J': '9'}
-    
+
     # Se o 5º caractere for letra, troca pelo número
     char_5 = placa[4]
     if char_5.isalpha():
         char_sub = mapa.get(char_5, char_5)
         return placa[:4] + char_sub + placa[5:]
-    
+
     return placa
 
 def fazer_login_agems(email, senha):
@@ -187,7 +187,7 @@ def fazer_login_agems(email, senha):
         "query": "mutation Login_Auth($email: String!, $senha: String!) {\n  login(input: {email: $email, senha: $senha}) {\n    token\n  }\n}"
     }
     headers = {
-        "content-type": "application/json", 
+        "content-type": "application/json",
         "apollo-require-preflight": "true",
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -213,7 +213,7 @@ def login_systemsat():
 def buscar_todos_veiculos(token):
     url_vistoria = "https://www.monitora.ms.gov.br/vistoria/"
     headers = {
-        "content-type": "application/json", 
+        "content-type": "application/json",
         "authorization": f"Bearer {token}",
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "referer": "https://www.monitora.ms.gov.br/",
@@ -261,34 +261,89 @@ def buscar_todos_veiculos(token):
         veiculos_mestre[placa] = principal
     return veiculos_mestre
 
-def buscar_empresas_regulares(token):
-    url_req = "https://www.monitora.ms.gov.br/req/"
+def buscar_empresas_com_pasta_valida(token):
     headers = {
         "content-type": "application/json", "authorization": f"Bearer {token}",
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "referer": "https://www.monitora.ms.gov.br/", "origin": "https://www.monitora.ms.gov.br"
     }
-    payload = {
-        "operationName": "buscarEmpresasSemPaginacao",
-        "variables": {},
-        "query": "query buscarEmpresasSemPaginacao { buscarEmpresasSemPaginacao { ativo pessoaJuridica { razaoSocial } tiposEmpresas { descricao } } }"
-    }
-    res = requests.post(url_req, json=payload, headers=headers, timeout=30)
-    res.raise_for_status()
-    resposta = res.json()
-    lista_empresas = resposta.get("data", {}).get("buscarEmpresasSemPaginacao")
-    if not isinstance(lista_empresas, list) or not lista_empresas:
-        raise ValueError("Resposta da AGEMS sem a lista de empresas esperada.")
-    empresas_regulares = set()
-    for emp in lista_empresas:
-        if not emp.get("ativo"): continue
-        tipos = emp.get("tiposEmpresas") or []
-        for t in tipos:
-            if t.get("descricao", "").strip().upper() == "REGULAR":
-                razao = normalizar_nome(emp.get("pessoaJuridica", {}).get("razaoSocial"))
-                if razao: empresas_regulares.add(razao)
+    url = "https://www.monitora.ms.gov.br/linha"
+    empresas_com_pasta = set()
+    page = 1
+    has_more = True
+    data_hoje = date.today()
+
+    while has_more:
+        payload = {
+            "operationName": "BuscarPastas_Linha",
+            "variables": {"filtros": {}, "page": float(page)},
+            "query": """query BuscarPastas_Linha($filtros: FiltroBuscarPastasInput, $page: Float) {
+              buscarPastas(filtros: $filtros, pageOptionsDto: {paginate: true, page: $page, take: 50}) {
+                data {
+                  id
+                  numero
+                  descricao
+                  empresa {
+                    nomeFantasia
+                    razaoSocial
+                  }
+                  ordemServicos {
+                    id
+                    numero
+                    vencimento
+                  }
+                }
+                meta
+              }
+            }"""
+        }
+        try:
+            res = requests.post(url, json=payload, headers=headers, timeout=30)
+            res.raise_for_status()
+            resposta = res.json()
+            buscar_pastas_node = resposta.get("data", {}).get("buscarPastas") or {}
+            pastas = buscar_pastas_node.get("data") or []
+            meta = buscar_pastas_node.get("meta") or {}
+
+            if not pastas:
                 break
-    return empresas_regulares
+
+            for pasta in pastas:
+                datas_validade = [
+                    os_item.get("vencimento")
+                    for os_item in pasta.get("ordemServicos") or []
+                ]
+                is_valida = False
+                for data_validade in datas_validade:
+                    if data_validade:
+                        try:
+                            if data_vistoria_valida(data_validade, data_hoje):
+                                is_valida = True
+                                break
+                        except (TypeError, ValueError):
+                            continue
+
+                if is_valida:
+                    emp_obj = pasta.get("empresa") or {}
+                    nome_empresa = emp_obj.get("razaoSocial") or emp_obj.get("nomeFantasia") or pasta.get("descricao")
+                    razao = normalizar_nome(nome_empresa)
+                    if razao:
+                        empresas_com_pasta.add(razao)
+
+            has_next = meta.get("hasNextPage") if isinstance(meta, dict) else False
+            page_count = meta.get("pageCount", 1) if isinstance(meta, dict) else 1
+            if has_next or (page < page_count):
+                page += 1
+            else:
+                has_more = False
+        except Exception as e:
+            print(f"[Monitora] Erro ao buscar pastas de empresas: {e}")
+            break
+
+    return empresas_com_pasta
+
+def buscar_empresas_regulares(token):
+    return buscar_empresas_com_pasta_valida(token)
 
 def buscar_pedidos_desativacao(token):
     url_vistoria = "https://www.monitora.ms.gov.br/vistoria/"
@@ -299,14 +354,14 @@ def buscar_pedidos_desativacao(token):
     }
     query = """query solicitacoesAtivacoesDesativacoesVeiculos_vistoria($veiculo: String, $paging: CursorPaging) {
       solicitacoesAtivacoesDesativacoesVeiculos(filter: {veiculo: {or: [{placa: {iLike: $veiculo}}, {numeroChassi: {iLike: $veiculo}}, {prefixo: {iLike: $veiculo}}]}}, paging: $paging, sorting: {field: createdAt, direction: DESC}) {
-        edges { 
-        node { 
-            motivo, 
-            tipoSolicitacao, 
-            aprovado, 
-            quemAnalisouId, 
-            veiculo { placa empresa { razaoSocial } } 
-          } 
+        edges {
+        node {
+            motivo,
+            tipoSolicitacao,
+            aprovado,
+            quemAnalisouId,
+            veiculo { placa empresa { razaoSocial } }
+          }
         }
         pageInfo { endCursor, hasNextPage }
       }
@@ -316,8 +371,8 @@ def buscar_pedidos_desativacao(token):
         paging_param = {"first": 50}
         if cursor_atual: paging_param["after"] = cursor_atual
         payload = {
-            "operationName": "solicitacoesAtivacoesDesativacoesVeiculos_vistoria", 
-            "variables": {"paging": paging_param, "veiculo": "%%"}, 
+            "operationName": "solicitacoesAtivacoesDesativacoesVeiculos_vistoria",
+            "variables": {"paging": paging_param, "veiculo": "%%"},
             "query": query
         }
         resposta_http = requests.post(url_vistoria, json=payload, headers=headers, timeout=30)
@@ -332,11 +387,11 @@ def buscar_pedidos_desativacao(token):
             if not placa_raw: continue
             placa = limpar_placa(placa_raw)
             if not placa: continue
-            
+
             # Filtro manual no Python para garantir que pegamos apenas o que é realmente pendente
             is_desat = node.get("tipoSolicitacao") == "DESATIVACAO"
             is_pendente = node.get("aprovado") is None and node.get("quemAnalisouId") is None
-            
+
             if is_desat and is_pendente:
                 empresa_obj = (node.get("veiculo") or {}).get("empresa")
                 if isinstance(empresa_obj, dict):
@@ -347,7 +402,7 @@ def buscar_pedidos_desativacao(token):
                     "empresa": empresa,
                     "motivo": node.get("motivo", "Sem motivo")
                 })
-                    
+
         tem_proxima = solic_node.get("pageInfo", {}).get("hasNextPage", False)
         cursor_atual = solic_node.get("pageInfo", {}).get("endCursor")
     return historico
@@ -387,7 +442,7 @@ def buscar_posicoes_rastreadores(token_systemsat):
             if not placa: continue
             empresa_sys = pos.get("ClientName") or pos.get("TrackedUnitDescription") or pos.get("GroupName") or "Desconhecida"
             dt_pos = parse_data_api(data_str, "EventDate")
-            
+
             # Se por ventura tiver mais de um registro para a mesma placa sanitizada, manter o mais recente
             if placa in rastreadores:
                 if dt_pos <= rastreadores[placa]["dt"]:
@@ -426,29 +481,29 @@ def interpolar_rota(coordenadas_lon_lat, distancia_m=50):
     if not coordenadas_lon_lat: return []
     interpolados = [coordenadas_lon_lat[0]]
     dist_acumulada = 0.0
-    
+
     for i in range(len(coordenadas_lon_lat) - 1):
         p1 = coordenadas_lon_lat[i]
         p2 = coordenadas_lon_lat[i+1]
-        
+
         d = geodesic((p1[1], p1[0]), (p2[1], p2[0])).meters
-        
+
         while dist_acumulada + d >= distancia_m:
             falta = distancia_m - dist_acumulada
             razao = falta / d if d > 0 else 0
-            
+
             lon_interp = p1[0] + (p2[0] - p1[0]) * razao
             lat_interp = p1[1] + (p2[1] - p1[1]) * razao
-            
+
             novo_ponto = [lon_interp, lat_interp]
             interpolados.append(novo_ponto)
-            
+
             dist_acumulada = 0
             d -= falta
             p1 = novo_ponto
-            
+
         dist_acumulada += d
-        
+
     return interpolados
 
 def buscar_pastas_linha(token):
@@ -478,7 +533,7 @@ def buscar_todos_pontos_monitora(token):
             all_points.append(edge.get("node"))
         has_next = pontos_data.get("pageInfo", {}).get("hasNextPage", False)
         cursor = pontos_data.get("pageInfo", {}).get("endCursor")
-    
+
     # Cria dicionario nome -> [lon, lat]
     dict_pontos = {}
     for p in all_points:
@@ -499,17 +554,17 @@ def buscar_linha_trajeto(token, linha_id):
 def enviar_rota_global(payload, token_sys, max_retries=3):
     url = "https://integration.systemsatx.com.br/GlobalBus/Route/InsertRouteWithTrajectory"
     headers = {"Authorization": f"Bearer {token_sys}", "Content-Type": "application/json"}
-    
+
     for tentativa in range(max_retries):
         try:
             print(f"[SystemSat] Tentativa {tentativa + 1}/{max_retries} - Código: {payload.get('RouteIntegrationCode')}")
             res = requests.post(url, json=payload, headers=headers, timeout=120)
-            
+
             print(f"[SystemSat] Status: {res.status_code} | Resposta: {res.text[:500]}")
-            
+
             if res.status_code == 200:
                 return res.json()
-            
+
             # Se deu erro de duplicata, gera novo código e tenta novamente
             resp_text = res.text.lower()
             if "duplicate" in resp_text or "already exists" in resp_text or "duplicat" in resp_text:
@@ -517,10 +572,10 @@ def enviar_rota_global(payload, token_sys, max_retries=3):
                 print(f"[SystemSat] RouteIntegrationCode duplicado! Gerando novo: {novo_code}")
                 payload["RouteIntegrationCode"] = novo_code
                 continue
-            
+
             # Outro erro HTTP - levanta exceção com detalhes da resposta
             raise Exception(f"SystemSat retornou status {res.status_code}: {res.text[:500]}")
-            
+
         except requests.exceptions.Timeout:
             print(f"[SystemSat] Timeout na tentativa {tentativa + 1}")
             if tentativa == max_retries - 1:
@@ -529,7 +584,7 @@ def enviar_rota_global(payload, token_sys, max_retries=3):
         except requests.exceptions.ConnectionError as e:
             print(f"[SystemSat] Erro de conexão: {e}")
             raise Exception(f"Erro de conexão com SystemSat: {str(e)[:200]}")
-    
+
     raise Exception("Falha ao enviar rota após todas as tentativas")
 
 def processar_kml_file(file_content):
@@ -544,7 +599,7 @@ def processar_kml_file(file_content):
         for ls in root.findall('.//LineString/coordinates'):
             coords_text = ls.text
             break
-            
+
     pontos = []
     if coords_text:
         for par in coords_text.strip().split():
@@ -560,7 +615,7 @@ def gerar_relatorios_completos(token_agems, token_sys):
     global _report_status
     try:
         def log(msg): _report_status["log"].append(msg)
-        
+
         log("🔍 Carregando dados da AGEMS e SystemSat...")
         veiculos = buscar_todos_veiculos(token_agems)
         empresas_regulares = buscar_empresas_regulares(token_agems)
@@ -648,7 +703,7 @@ def gerar_relatorios_completos(token_agems, token_sys):
 
         # 2. Execução da Auditoria (Regras 1, 2, 3)
         log("⚙️ Executando regras de auditoria...")
-        
+
         # Estrutura para detecção de duplicatas
         placas_normalizadas = {} # normalizada: [placas_reais]
 
@@ -665,7 +720,7 @@ def gerar_relatorios_completos(token_agems, token_sys):
             empresa = dados["empresa"]
             is_ativo = dados["ativo"]
             is_aprovado = dados["status"] in ["aprovado", "pendente envio"]
-            
+
             # Normalização para duplicatas
             p_norm = normalizar_placa_mercosul(placa)
             if p_norm not in placas_normalizadas:
@@ -701,9 +756,14 @@ def gerar_relatorios_completos(token_agems, token_sys):
             precisa_manut_manual = v_mestre.get("manutencao_manual", False)
 
             # Regra: Desinstalação (Inativo ou pedido de desativação, mas ainda tem rastreador)
-            if (is_inativo or is_desat_pendente) and has_tracker:
-                salvar_no_banco(placa, empresa, "desinstalacao", motivo_desat or "Inativo no sistema", prefixo=dados.get("prefixo"))
-            
+            if (is_inativo or is_desat_pendente or (is_monitora_ok and not is_empresa_regular)) and has_tracker:
+                motivo = motivo_desat or (
+                    "Empresa sem pasta com vencimento vigente"
+                    if is_monitora_ok and not is_empresa_regular
+                    else "Inativo no sistema"
+                )
+                salvar_no_banco(placa, empresa, "desinstalacao", motivo, prefixo=dados.get("prefixo"))
+
             # Regra: Inativação Pendente sem Rastreador (Novo)
             elif is_desat_pendente and not has_tracker:
                 salvar_no_banco(placa, empresa, "inativacao_pendente", f"Solicitação de inativação pendente e já sem rastreador. Motivo: {motivo_desat}", prefixo=dados.get("prefixo"))
@@ -711,9 +771,9 @@ def gerar_relatorios_completos(token_agems, token_sys):
             # Regra: Instalação (se não tiver flag manual de manutenção)
             elif is_monitora_ok and not has_tracker and is_empresa_regular and not precisa_manut_manual:
                 salvar_no_banco(placa, empresa, "instalacao", "OK na AGEMS, mas sem rastreador", prefixo=dados.get("prefixo"))
-            
+
             # Regra: Manutenção
-            elif is_ativo:
+            elif is_monitora_ok and is_empresa_regular:
                 if has_tracker:
                     dias_off = (data_hoje_dt - rastreadores[placa]["dt"]).days
                     if deve_entrar_manutencao(dias_off, precisa_manut_manual):
@@ -806,8 +866,8 @@ def recriar_cache_relatorio(lista_ativos_total=None, lista_ativos_com=None, list
 
             _report_cache.clear()
             _report_cache.update({
-                "instalacao": instalacao_grouped, 
-                "manutencao": manutencao_grouped, 
+                "instalacao": instalacao_grouped,
+                "manutencao": manutencao_grouped,
                 "desinstalacao": desinstalacao_grouped,
                 "duplicadas": duplicadas_grouped,
                 "inativacao_pendente": inativacao_pendente_grouped,
@@ -864,10 +924,10 @@ def gerar():
     if "logged_in" not in session: return jsonify({"error": 401}), 401
     global _report_status
     _report_status = {"status": "running", "log": [], "error": None}
-    
+
     # Captura o token FORA da thread para evitar o erro de context
     token_agems = session.get("token_agems")
-    
+
     threading.Thread(target=executar_geracao, args=(token_agems,), daemon=True).start()
     return jsonify({"ok": True})
 
@@ -887,7 +947,7 @@ def status():
 def relatorio(tipo):
     if "logged_in" not in session: return redirect(url_for("login"))
     with _report_lock: dados = dict(_report_cache)
-    
+
     titulos = {
         "instalacao": "Relatório de Instalação",
         "manutencao": "Relatório de Manutenção",
@@ -895,12 +955,12 @@ def relatorio(tipo):
         "duplicadas": "Relatório de Placas Duplicadas (Mercosul)",
         "inativacao_pendente": "Inativação Pendente sem Rastreador"
     }
-    
-    return render_template("relatorio.html", 
-        tipo=tipo, 
-        titulo=titulos.get(tipo, f"Relatório de {tipo.capitalize()}"), 
-        itens=dados.get(tipo, {}), 
-        gerado_em=dados.get("gerado_em", ""), 
+
+    return render_template("relatorio.html",
+        tipo=tipo,
+        titulo=titulos.get(tipo, f"Relatório de {tipo.capitalize()}"),
+        itens=dados.get(tipo, {}),
+        gerado_em=dados.get("gerado_em", ""),
         email=session.get("email")
     )
 
@@ -929,7 +989,7 @@ def veiculos_save():
             if not audit_manut:
                 # Remove do relatório de instalação caso estivesse lá
                 VeiculoAudit.query.filter_by(placa=placa, tipo_relatorio="instalacao").delete()
-                
+
                 novo_audit = VeiculoAudit(
                     placa=v.placa,
                     prefixo=v.prefixo,
@@ -945,7 +1005,7 @@ def veiculos_save():
         else:
             if audit_manut and audit_manut.motivo.startswith("Marcado"):
                 db.session.delete(audit_manut)
-                
+
         db.session.commit()
 
         # Recria o cache global do relatório imediatamente
@@ -957,11 +1017,11 @@ def veiculos_save():
 @app.route("/exportar/ativos")
 def exportar_ativos():
     if "logged_in" not in session: return redirect(url_for("login"))
-    with _report_lock: 
+    with _report_lock:
         total = _report_cache.get("ativos_vistoria_total", [])
         com = _report_cache.get("ativos_vistoria_com_rastreador", [])
         sem = _report_cache.get("ativos_vistoria_sem_rastreador", [])
-    
+
     if not total:
         return "Nenhum dado disponível. Gere um relatório primeiro.", 404
 
@@ -974,7 +1034,7 @@ def exportar_ativos():
         df_total.to_excel(writer, index=False, sheet_name='Total')
         if not df_com.empty: df_com.to_excel(writer, index=False, sheet_name='Com Rastreador')
         if not df_sem.empty: df_sem.to_excel(writer, index=False, sheet_name='Sem Rastreador')
-    
+
     output.seek(0)
     response = make_response(output.getvalue())
     response.headers["Content-Disposition"] = "attachment; filename=veiculos_ativos.xlsx"
@@ -985,11 +1045,11 @@ def exportar_ativos():
 def exportar_relatorio(tipo):
     if "logged_in" not in session: return redirect(url_for("login"))
     with _report_lock: dados = dict(_report_cache)
-    
+
     itens = dados.get(tipo, {})
     if not itens:
         return "Nenhum dado disponível. Gere um relatório primeiro.", 404
-        
+
     lista_plana = []
     for emp, lista in itens.items():
         for v in lista:
@@ -1002,12 +1062,12 @@ def exportar_relatorio(tipo):
             if v.ultima_posicao: row["Última Posição"] = v.ultima_posicao
             if v.dias_offline is not None: row["Dias Offline"] = v.dias_offline
             lista_plana.append(row)
-            
+
     df = pd.DataFrame(lista_plana)
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name=tipo.capitalize())
-        
+
     output.seek(0)
     response = make_response(output.getvalue())
     response.headers["Content-Disposition"] = f"attachment; filename=relatorio_{tipo}.xlsx"
@@ -1021,16 +1081,16 @@ def whatsapp():
         instalacao = _report_cache.get("instalacao", {})
         manutencao = _report_cache.get("manutencao", {})
         desinstalacao = _report_cache.get("desinstalacao", {})
-    
+
     empresas = set(instalacao.keys()) | set(manutencao.keys()) | set(desinstalacao.keys())
     empresas = sorted(list(empresas))
-    
+
     mensagens = {}
     for emp in empresas:
         inst_list = [f"{v.placa} - {v.prefixo}" if v.prefixo else v.placa for v in instalacao.get(emp, [])]
         man_list = [f"{v.placa} - {v.prefixo}" if v.prefixo else v.placa for v in manutencao.get(emp, [])]
         des_list = [f"{v.placa} - {v.prefixo}" if v.prefixo else v.placa for v in desinstalacao.get(emp, [])]
-        
+
         resp = EmpresaResponsavel.query.filter_by(empresa=emp).first()
         if resp and resp.titulo != 'Desconhecido' and resp.nome:
             saudacao = f"{resp.titulo}. {resp.nome}"
@@ -1038,23 +1098,23 @@ def whatsapp():
             saudacao = f"{resp.nome}"
         else:
             saudacao = "senhor(a)"
-        
+
         msg = f"Olá {saudacao}. Bom dia, sou o Danilo trabalho aqui na Track Land sou um dos responsáveis do contrato da AGEMS juntamente com o Vinicius.\n"
-        
+
         if inst_list:
             msg += f"\nEstou entrando em contato para saber a disponibilidade dos veículos a seguir para a instalação:\n\n"
             msg += "\n".join(inst_list) + "\n"
-            
+
         if man_list:
             msg += f"\ne também precisamos realizar as manutenções:\n\n"
             msg += "\n".join(man_list) + "\n"
-            
+
         if des_list:
             msg += f"\ne também precisamos realizar as desinstalações:\n\n"
             msg += "\n".join(des_list) + "\n"
-            
+
         msg += f"\nTem alguma data preferida pelo {saudacao}, eles viajam para Campo Grande alguma data?"
-        
+
         mensagens[emp] = msg
 
     return render_template("whatsapp.html", empresas=empresas, mensagens=mensagens)
@@ -1073,10 +1133,10 @@ def empresas_lista():
     empresas_db = db.session.query(Veiculo.empresa).distinct().all()
     lista_empresas = [e[0] for e in empresas_db if e[0] and e[0] in empresas_regulares]
     lista_empresas.sort()
-    
+
     responsaveis = EmpresaResponsavel.query.all()
     resp_map = {r.empresa: r for r in responsaveis}
-    
+
     return render_template("empresas.html", empresas=lista_empresas, resp_map=resp_map)
 
 @app.route("/empresas/save", methods=["POST"])
@@ -1085,12 +1145,12 @@ def empresas_save():
     empresa = request.form.get("empresa")
     titulo = request.form.get("titulo")
     nome = request.form.get("nome")
-    
+
     resp = EmpresaResponsavel.query.filter_by(empresa=empresa).first()
     if not resp:
         resp = EmpresaResponsavel(empresa=empresa)
         db.session.add(resp)
-    
+
     resp.titulo = titulo
     resp.nome = nome
     db.session.commit()
@@ -1112,10 +1172,10 @@ def api_linhas():
     if "logged_in" not in session: return jsonify([]), 401
     pasta_id = request.args.get("pasta_id")
     if not pasta_id: return jsonify([]), 400
-    
+
     token = session.get("token_agems")
     headers = {"content-type": "application/json", "authorization": f"Bearer {token}", "user-agent": "Mozilla/5.0"}
-    
+
     # Busca a pasta e extrai as linhas das Ordens de Serviço
     payload = {
         "operationName": "pasta",
@@ -1125,10 +1185,10 @@ def api_linhas():
     try:
         res = requests.post("https://www.monitora.ms.gov.br/linha", json=payload, headers=headers, timeout=30).json()
         print(f"[Monitora] Pasta {pasta_id}: {json.dumps(res, ensure_ascii=False)[:800]}")
-        
+
         pasta_data = res.get("data", {}).get("pasta", {})
         ordens = pasta_data.get("ordemServicos", [])
-        
+
         # Extrair linhas únicas das ordens de serviço
         linhas_dict = {}
         for os_item in ordens:
@@ -1145,7 +1205,7 @@ def api_linhas():
                     "numero": numero,
                     "nome": nome
                 }
-        
+
         linhas = list(linhas_dict.values())
         print(f"[Monitora] {len(linhas)} linha(s) encontrada(s) na pasta")
         if not linhas:
@@ -1163,30 +1223,30 @@ def api_gerar_rota():
     sentido_req = data.get("sentido", "IDA")
     distancia = int(data.get("distancia", 50))
     empresa_nome = data.get("empresa_nome", "25")
-    
+
     token = session.get("token_agems")
     token_sys = login_systemsat()
-    
+
     try:
         linha = buscar_linha_trajeto(token, linha_id)
         if not linha: return jsonify({"error": "Linha não encontrada"}), 404
-        
+
         sentido_obj = None
         for s in linha.get("sentidos", []):
             if s.get("sentido") == sentido_req:
                 sentido_obj = s
                 break
         if not sentido_obj: return jsonify({"error": f"Sentido {sentido_req} não encontrado na linha"}), 404
-        
+
         lista_nomes_pontos = []
         trajetos = sentido_obj.get("trajetos", [])
         if not trajetos: return jsonify({"error": "Nenhum trajeto encontrado"}), 404
-        
+
         primeiro_secc = trajetos[0].get("seccionamento", {})
         lista_nomes_pontos.append(primeiro_secc.get("pontoInicial", {}).get("nome"))
         for t in trajetos:
             lista_nomes_pontos.append(t.get("seccionamento", {}).get("pontoFinal", {}).get("nome"))
-            
+
         dict_pontos = buscar_todos_pontos_monitora(token)
         coordenadas_ordenadas = []
         for nome in lista_nomes_pontos:
@@ -1200,22 +1260,22 @@ def api_gerar_rota():
                         break
             if coord:
                 coordenadas_ordenadas.append(coord)
-                
+
         if len(coordenadas_ordenadas) < 2:
             return jsonify({"error": "Não foi possível encontrar as coordenadas de pelo menos 2 pontos"}), 400
-            
+
         geom_osrm = osrm_routing(coordenadas_ordenadas)
         if not geom_osrm:
             geom_osrm = coordenadas_ordenadas
-        
+
         print(f"[Rota] Pontos OSRM: {len(geom_osrm)} | Coordenadas originais: {len(coordenadas_ordenadas)}")
-        
+
         # Auto-ajuste de distância para ficar abaixo de 3000 pontos
         LIMITE_PONTOS = 3000
         distancias_possiveis = [200, 250, 300, 350]
         distancia_final = max(distancia, 200) # Garante que o mínimo seja 200 para testes
         geom_interpolada = interpolar_rota(geom_osrm, distancia_m=distancia_final)
-        
+
         for d in distancias_possiveis:
             if d <= distancia_final:
                 continue
@@ -1224,24 +1284,24 @@ def api_gerar_rota():
             print(f"[Rota] {len(geom_interpolada)} pontos excede o limite de {LIMITE_PONTOS}. Aumentando distância de {distancia_final}m para {d}m...")
             distancia_final = d
             geom_interpolada = interpolar_rota(geom_osrm, distancia_m=distancia_final)
-        
+
         if len(geom_interpolada) > LIMITE_PONTOS:
             print(f"[Rota] AVISO: Ainda com {len(geom_interpolada)} pontos mesmo a {distancia_final}m. Cortando em {LIMITE_PONTOS}.")
             geom_interpolada = geom_interpolada[:LIMITE_PONTOS]
-        
+
         print(f"[Rota] Distância final: {distancia_final}m | Total pontos: {len(geom_interpolada)}")
-        
-        route_integration_code = str(uuid.uuid4())[:8] 
+
+        route_integration_code = str(uuid.uuid4())[:8]
         client_integration_code = "55"
-        client_bus_code = empresa_nome 
-        
+        client_bus_code = empresa_nome
+
         points_payload = [{"Latitude": p[1], "Longitude": p[0]} for p in geom_interpolada]
-        
+
         nome_rota = f"{linha.get('numero', '')} - {linha.get('nome', '')} - {sentido_req}"
         payload_global = {
             "RouteIntegrationCode": route_integration_code,
             "ClientIntegrationCode": client_integration_code,
-            "ClientBusIntegrationCode": "86", 
+            "ClientBusIntegrationCode": "86",
             "IdDirection": 1 if sentido_req == "IDA" else 2,
             "Tolerance": 50,
             "StartRadius": 100,
@@ -1259,7 +1319,7 @@ def api_gerar_rota():
             "TripCancelTolerance": 9200,
             "UpdateDepartureOnReenterPoint": True
         }
-        
+
         # Log limpo sem a lista gigante de pontos
         payload_log = {k: v for k, v in payload_global.items() if k != 'Points'}
         print(f"[Rota] Payload (sem pontos): {payload_log}")
@@ -1272,10 +1332,10 @@ def api_gerar_rota():
 @app.route("/api/teste_rota", methods=["POST"])
 def api_teste_rota():
     if "logged_in" not in session: return jsonify({"error": "Não autenticado"}), 401
-    
+
     token_sys = login_systemsat()
     route_integration_code = str(uuid.uuid4())[:8]
-    
+
     # Rota curta com 6 pontos para teste de timeout
     pontos_teste = [
         [-54.6122, -20.4697],
@@ -1286,11 +1346,11 @@ def api_teste_rota():
         [-54.6170, -20.4740]
     ]
     points_payload = [{"Latitude": p[1], "Longitude": p[0]} for p in pontos_teste]
-    
+
     payload_global = {
         "RouteIntegrationCode": route_integration_code,
         "ClientIntegrationCode": "25",
-        "ClientBusIntegrationCode": "25", 
+        "ClientBusIntegrationCode": "25",
         "IdDirection": 1,
         "Tolerance": 50,
         "StartRadius": 100,
@@ -1308,7 +1368,7 @@ def api_teste_rota():
         "TripCancelTolerance": 9200,
         "UpdateDepartureOnReenterPoint": True
     }
-    
+
     try:
         enviar_rota_global(payload_global, token_sys)
         return jsonify({"ok": True, "msg": f"Rota teste com 6 pontos enviada! Cód: {route_integration_code}"})
@@ -1318,32 +1378,32 @@ def api_teste_rota():
 @app.route("/api/enviar_kml", methods=["POST"])
 def api_enviar_kml():
     if "logged_in" not in session: return jsonify({"error": "Não autenticado"}), 401
-    
+
     nome = request.form.get("nome")
     empresa = request.form.get("empresa")
     direction = int(request.form.get("direction", 1))
     distancia = int(request.form.get("distancia", 50))
     arquivo = request.files.get("arquivo")
-    
+
     if not arquivo: return jsonify({"error": "Arquivo KML não enviado"}), 400
-    
+
     try:
         conteudo_kml = arquivo.read().decode('utf-8')
         pontos_lon_lat = processar_kml_file(conteudo_kml)
         if not pontos_lon_lat:
             return jsonify({"error": "Nenhuma LineString encontrada"}), 400
-            
+
         geom_interpolada = interpolar_rota(pontos_lon_lat, distancia_m=distancia)
         token_sys = login_systemsat()
-        
+
         route_integration_code = str(uuid.uuid4())[:8]
         client_integration_code = "25"
         points_payload = [{"Latitude": p[1], "Longitude": p[0]} for p in geom_interpolada]
-        
+
         payload_global = {
             "RouteIntegrationCode": route_integration_code,
             "ClientIntegrationCode": client_integration_code,
-            "ClientBusIntegrationCode": empresa, 
+            "ClientBusIntegrationCode": empresa,
             "IdDirection": direction,
             "Tolerance": 50,
             "StartRadius": 100,
@@ -1361,10 +1421,10 @@ def api_enviar_kml():
             "TripCancelTolerance": 0,
             "UpdateDepartureOnReenterPoint": True
         }
-        
+
         enviar_rota_global(payload_global, token_sys)
         return jsonify({"ok": True, "msg": f"KML '{nome}' com {len(points_payload)} pontos enviado! Cód: {route_integration_code}"})
-        
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

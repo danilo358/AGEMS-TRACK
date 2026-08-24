@@ -131,6 +131,14 @@ def parse_data_api(valor, nome_campo):
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Data inválida recebida em {nome_campo}: {valor!r}") from exc
 
+def parse_ultima_comunicacao(valor):
+    if not valor:
+        return None
+    try:
+        return datetime.strptime(valor, "%d/%m/%Y %H:%M").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
 def data_vistoria_valida(valor, hoje):
     if not valor:
         return False
@@ -146,6 +154,9 @@ def data_vistoria_valida(valor, hoje):
 
 def deve_entrar_manutencao(dias_offline, manutencao_manual):
     return manutencao_manual or (dias_offline is not None and dias_offline >= 15)
+
+def deve_entrar_desinstalacao(is_inativo, is_desat_pendente, is_empresa_regular, has_tracker):
+    return has_tracker and (is_inativo or is_desat_pendente or not is_empresa_regular)
 
 def formatar_data_relatorio(data=None):
     data = data or agora_utc()
@@ -412,15 +423,13 @@ def selecionar_ocorrencia_veiculo(dados, pedidos):
     pedidos = pedidos or []
     if isinstance(pedidos, dict):
         pedidos = [pedidos]
-    for pedido in pedidos:
-        empresa_pedido = normalizar_nome(pedido.get("empresa"))
-        if empresa_pedido:
-            for ocorrencia in ocorrencias:
-                if ocorrencia.get("empresa") == empresa_pedido:
-                    return ocorrencia, pedido.get("motivo", "Sem motivo")
-    if len(pedidos) == 1 and not pedidos[0].get("empresa"):
-        return dados, pedidos[0].get("motivo", "Sem motivo")
-    return dados, None
+
+    ocorrencias_ativas = [ocorrencia for ocorrencia in ocorrencias if ocorrencia.get("ativo")]
+    principal = ocorrencias_ativas[-1] if ocorrencias_ativas else ocorrencias[-1]
+
+    if pedidos:
+        return principal, pedidos[0].get("motivo", "Sem motivo")
+    return principal, None
 
 def buscar_posicoes_rastreadores(token_systemsat):
     url = "https://integration.systemsatx.com.br/Controlws/LastPosition/GetLastPositions"
@@ -661,7 +670,8 @@ def gerar_relatorios_completos(token_agems, token_sys):
                 mestre_snapshot[placa] = {
                     "prefixo": prefixo,
                     "observacao": v_mestre.observacao or "",
-                    "manutencao_manual": bool(v_mestre.manutencao_manual)
+                    "manutencao_manual": bool(v_mestre.manutencao_manual),
+                    "ultima_comunicacao": ultima_comunicacao or v_mestre.ultima_comunicacao
                 }
                 if indice % 100 == 0 or indice == total_veiculos:
                     log(f"🔄 Frota sincronizada: {indice}/{total_veiculos}")
@@ -719,7 +729,6 @@ def gerar_relatorios_completos(token_agems, token_sys):
             dados, motivo_desat = selecionar_ocorrencia_veiculo(dados, pedidos_desativacao.get(placa))
             empresa = dados["empresa"]
             is_ativo = dados["ativo"]
-            is_aprovado = dados["status"] in ["aprovado", "pendente envio"]
 
             # Normalização para duplicatas
             p_norm = normalizar_placa_mercosul(placa)
@@ -734,11 +743,15 @@ def gerar_relatorios_completos(token_agems, token_sys):
                 except ValueError as exc:
                     log(str(exc))
 
-            is_monitora_ok = is_ativo and is_aprovado and has_vistoria
+            is_monitora_ok = is_ativo and has_vistoria
             is_empresa_regular = empresa in empresas_regulares
             is_desat_pendente = (motivo_desat is not None)
             is_inativo = (not is_ativo)
-            has_tracker = placa in rastreadores
+            ultima_comunicacao = rastreadores.get(placa, {}).get("dt")
+            v_mestre = mestre_snapshot.get(placa, {})
+            if ultima_comunicacao is None:
+                ultima_comunicacao = parse_ultima_comunicacao(v_mestre.get("ultima_comunicacao"))
+            has_tracker = ultima_comunicacao is not None
 
             if is_monitora_ok and is_empresa_regular:
                 qtd_ativos_vistoria_total += 1
@@ -752,14 +765,13 @@ def gerar_relatorios_completos(token_agems, token_sys):
                     lista_ativos_vistoria_sem_rastreador.append(v_dados)
 
             # A frota já foi carregada em memória na sincronização.
-            v_mestre = mestre_snapshot.get(placa, {})
             precisa_manut_manual = v_mestre.get("manutencao_manual", False)
 
             # Regra: Desinstalação (Inativo ou pedido de desativação, mas ainda tem rastreador)
-            if (is_inativo or is_desat_pendente or (is_monitora_ok and not is_empresa_regular)) and has_tracker:
+            if deve_entrar_desinstalacao(is_inativo, is_desat_pendente, is_empresa_regular, has_tracker):
                 motivo = motivo_desat or (
                     "Empresa sem pasta com vencimento vigente"
-                    if is_monitora_ok and not is_empresa_regular
+                    if not is_empresa_regular
                     else "Inativo no sistema"
                 )
                 salvar_no_banco(placa, empresa, "desinstalacao", motivo, prefixo=dados.get("prefixo"))
@@ -773,17 +785,15 @@ def gerar_relatorios_completos(token_agems, token_sys):
                 salvar_no_banco(placa, empresa, "instalacao", "OK na AGEMS, mas sem rastreador", prefixo=dados.get("prefixo"))
 
             # Regra: Manutenção
-            elif is_monitora_ok and is_empresa_regular:
+            elif is_ativo and is_empresa_regular:
                 if has_tracker:
-                    dias_off = (data_hoje_dt - rastreadores[placa]["dt"]).days
-                    if deve_entrar_manutencao(dias_off, precisa_manut_manual):
+                    dias_off = (data_hoje_dt - ultima_comunicacao).days
+                    if deve_entrar_manutencao(dias_off, False):
                         if dias_off >= 15:
                             motivo = f"Offline há {dias_off} dias"
                         else:
                             motivo = f"Marcado para manutenção (Offline há {dias_off} dias)"
-                        salvar_no_banco(placa, empresa, "manutencao", motivo, dias_off, rastreadores[placa]["dt"].strftime("%d/%m/%Y %H:%M"), prefixo=dados.get("prefixo"))
-                elif precisa_manut_manual:
-                    salvar_no_banco(placa, empresa, "manutencao", "Marcado para manutenção (Sem rastreador)", None, "", prefixo=dados.get("prefixo"))
+                        salvar_no_banco(placa, empresa, "manutencao", motivo, dias_off, ultima_comunicacao.strftime("%d/%m/%Y %H:%M"), prefixo=dados.get("prefixo"))
 
         # Regra: Placas Duplicadas
         # Sinalizar somente placa ativa na AGEMS com outra escrita no SystemSat.

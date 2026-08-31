@@ -431,6 +431,36 @@ def selecionar_ocorrencia_veiculo(dados, pedidos):
         return principal, pedidos[0].get("motivo", "Sem motivo")
     return principal, None
 
+def rastreador_esta_vinculado_ssx(posicao):
+    """Retorna False para registros de última posição que permanecem no SSX após a retirada do rastreador."""
+    if not isinstance(posicao, dict):
+        return False
+
+    valores_status = []
+    for campo in ("Status", "TrackedUnitStatus", "DeviceStatus", "VehicleStatus", "StatusDescription", "Ativo", "IsActive", "Enable", "Enabled", "TrackerStatus"):
+        valor = posicao.get(campo)
+        if valor is not None and valor != "":
+            valores_status.append(str(valor))
+
+    if posicao.get("IsActive") is False or posicao.get("Ativo") is False:
+        return False
+    if posicao.get("Enabled") is False or posicao.get("Enable") is False:
+        return False
+    if posicao.get("TrackerRemoved") is True or posicao.get("RastreadorRemovido") is True:
+        return False
+
+    texto_status = " ".join(valores_status).upper()
+    tokens_invalidos = (
+        "RETIRADO", "REMOVIDO", "DESATIVADO", "INATIVO", "DESLIGADO",
+        "CANCELADO", "EXCLUIDO", "SEM VINCULO", "SEM RASTREADOR",
+        "NAO VINCULADO", "NOT ACTIVE"
+    )
+    if any(token in texto_status for token in tokens_invalidos):
+        return False
+
+    return True
+
+
 def buscar_posicoes_rastreadores(token_systemsat):
     url = "https://integration.systemsatx.com.br/Controlws/LastPosition/GetLastPositions"
     headers = {
@@ -444,6 +474,9 @@ def buscar_posicoes_rastreadores(token_systemsat):
         raise ValueError("Resposta do SystemSat sem a lista de posições esperada.")
     rastreadores = {}
     for pos in res:
+        if not rastreador_esta_vinculado_ssx(pos):
+            continue
+
         placa_raw = pos.get("TrackedUnitIntegrationCode")
         data_str = pos.get("EventDate")
         if placa_raw and data_str:
@@ -749,9 +782,11 @@ def gerar_relatorios_completos(token_agems, token_sys):
             is_inativo = (not is_ativo)
             ultima_comunicacao = rastreadores.get(placa, {}).get("dt")
             v_mestre = mestre_snapshot.get(placa, {})
-            if ultima_comunicacao is None:
-                ultima_comunicacao = parse_ultima_comunicacao(v_mestre.get("ultima_comunicacao"))
-            has_tracker = ultima_comunicacao is not None
+            has_tracker = placa in rastreadores
+            if has_tracker:
+                ultima_comunicacao = rastreadores[placa]["dt"]
+            else:
+                ultima_comunicacao = None
 
             if is_monitora_ok and is_empresa_regular:
                 qtd_ativos_vistoria_total += 1

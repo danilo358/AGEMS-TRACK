@@ -196,6 +196,35 @@ def buscar_pedidos_desativacao(token):
 
     return {p: v["motivo"] for p, v in historico.items() if v["tipo"] == "DESATIVACAO"}
 
+def rastreador_esta_vinculado_ssx(posicao):
+    if not isinstance(posicao, dict):
+        return False
+
+    valores_status = []
+    for campo in ("Status", "TrackedUnitStatus", "DeviceStatus", "VehicleStatus", "StatusDescription", "Ativo", "IsActive", "Enable", "Enabled", "TrackerStatus"):
+        valor = posicao.get(campo)
+        if valor is not None and valor != "":
+            valores_status.append(str(valor))
+
+    if posicao.get("IsActive") is False or posicao.get("Ativo") is False:
+        return False
+    if posicao.get("Enabled") is False or posicao.get("Enable") is False:
+        return False
+    if posicao.get("TrackerRemoved") is True or posicao.get("RastreadorRemovido") is True:
+        return False
+
+    texto_status = " ".join(valores_status).upper()
+    tokens_invalidos = (
+        "RETIRADO", "REMOVIDO", "DESATIVADO", "INATIVO", "DESLIGADO",
+        "CANCELADO", "EXCLUIDO", "SEM VINCULO", "SEM RASTREADOR",
+        "NAO VINCULADO", "NOT ACTIVE"
+    )
+    if any(token in texto_status for token in tokens_invalidos):
+        return False
+
+    return True
+
+
 def buscar_posicoes_rastreadores(token_systemsat):
     url = "https://integration.systemsatx.com.br/Controlws/LastPosition/GetLastPositions"
     headers = {"Authorization": f"Bearer {token_systemsat}", "Content-Type": "application/json"}
@@ -205,6 +234,9 @@ def buscar_posicoes_rastreadores(token_systemsat):
     
     rastreadores = {}
     for pos in res:
+        if not rastreador_esta_vinculado_ssx(pos):
+            continue
+
         placa_raw = pos.get("TrackedUnitIntegrationCode")
         data_str = pos.get("EventDate")
         if placa_raw and data_str:

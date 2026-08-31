@@ -8,7 +8,16 @@ os.environ.setdefault("SYSTEMSAT_HASH_AUTH", "test-hash")
 os.environ.setdefault("SYSTEMSAT_USERNAME", "test-user")
 os.environ.setdefault("SYSTEMSAT_PASSWORD", "test-password")
 
-from app import buscar_todos_veiculos, data_vistoria_valida, deve_entrar_desinstalacao, deve_entrar_manutencao, parse_data_api, parse_ultima_comunicacao, selecionar_ocorrencia_veiculo
+from app import (
+    buscar_todos_veiculos,
+    buscar_posicoes_rastreadores,
+    data_vistoria_valida,
+    deve_entrar_desinstalacao,
+    deve_entrar_manutencao,
+    parse_data_api,
+    parse_ultima_comunicacao,
+    selecionar_ocorrencia_veiculo,
+)
 
 
 class RegrasRelatorioTest(unittest.TestCase):
@@ -91,6 +100,47 @@ class RegrasRelatorioTest(unittest.TestCase):
         has_tracker = False
         self.assertTrue(is_desat_pendente and not has_tracker)
         self.assertFalse(is_desat_pendente and has_tracker)
+
+    @patch("app.requests.post")
+    def test_buscar_posicoes_rastreadores_ignora_ultima_posicao_de_rastreador_removido(self, post):
+        resposta = Mock()
+        resposta.raise_for_status.return_value = None
+        resposta.json.return_value = [
+            {
+                "TrackedUnitIntegrationCode": "ABC1D23",
+                "EventDate": "2026-08-20T12:00:00Z",
+                "Status": "Retirado",
+                "TrackedUnitDescription": "Rastreador removido",
+            },
+            {
+                "TrackedUnitIntegrationCode": "XYZ9K10",
+                "EventDate": "2026-08-20T13:00:00Z",
+                "Status": "Ativo",
+                "TrackedUnitDescription": "Rastreador ativo",
+            },
+        ]
+        post.return_value = resposta
+
+        rastreadores = buscar_posicoes_rastreadores("token-teste")
+
+        self.assertNotIn("ABC1D23", rastreadores)
+        self.assertIn("XYZ9K10", rastreadores)
+
+    def test_sem_rastreador_ativo_no_ssx_nao_usa_ultima_comunicacao_antiga_do_banco(self):
+        placa = "DWO6189"
+        rastreadores = {}
+        mestre_snapshot = {placa: {"ultima_comunicacao": "10/08/2025 08:00"}}
+
+        ultima_comunicacao = rastreadores.get(placa, {}).get("dt")
+        has_tracker = placa in rastreadores
+        if has_tracker:
+            ultima_comunicacao = rastreadores[placa]["dt"]
+        else:
+            ultima_comunicacao = None
+
+        self.assertFalse(has_tracker)
+        self.assertIsNone(ultima_comunicacao)
+        self.assertNotIn(placa, rastreadores)
 
     @patch("app.requests.post")
     def test_coleta_preserva_ocorrencias_da_mesma_placa(self, post):

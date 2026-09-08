@@ -87,6 +87,23 @@ class RelatorioSnapshot(db.Model):
     ativos_vistoria_com_rastreador = db.Column(db.JSON, nullable=False, default=list)
     ativos_vistoria_sem_rastreador = db.Column(db.JSON, nullable=False, default=list)
 
+# Modelo para Auditoria de Conectividade dos Rastreadores
+class ConectividadeAudit(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    placa = db.Column(db.String(10), unique=True, index=True)
+    prefixo = db.Column(db.String(50))
+    empresa = db.Column(db.String(200))
+    status_analise = db.Column(db.String(50), default="OK") # "OK", "ERRO", "ALERTA"
+    anomalias = db.Column(db.JSON, default=list) # Lista de strings com os erros/alertas
+    total_posicoes = db.Column(db.Integer, default=0)
+    qtd_violacoes_ignicao = db.Column(db.Integer, default=0)
+    perc_saltos = db.Column(db.Float, default=0.0)
+    posicoes_json = db.Column(db.JSON, default=list) # [{lat, lng, velocity, ignition, eventDate}]
+    ultima_posicao_data = db.Column(db.String(100), nullable=True)
+    analisado_em = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    status_decisao = db.Column(db.String(50), default="PENDENTE") # "PENDENTE", "OK", "MANUTENCAO"
+    dias_analisados = db.Column(db.Integer, default=15)
+
 
 with app.app_context():
     db.create_all()
@@ -106,6 +123,22 @@ with app.app_context():
 _report_cache = {}
 _report_lock = threading.Lock()
 _report_status = {"status": "idle", "log": [], "error": None}
+
+# Estado global da auditoria de conectividade
+_conectividade_lock = threading.Lock()
+_conectividade_status = {
+    "status": "idle", # "idle", "running", "done", "error"
+    "log": [],
+    "progresso": 0,
+    "total": 0,
+    "atual": 0,
+    "error": None,
+    "placa_atual": "",
+    "ultima_execucao": None
+}
+
+# Flag de homologação para testes rápidos (0 = desativado / produção)
+LIMITE_HOMOLOGACAO_CONECTIVIDADE = int(os.environ.get("LIMITE_HOMOLOGACAO_CONECTIVIDADE", "0"))
 
 # =========================================================
 # FUNÇÕES DE UTILIDADE E LOGIN
@@ -1472,6 +1505,535 @@ def api_enviar_kml():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+# =========================================================
+# FUNÇÕES E ROTAS DE AUDITORIA DE CONECTIVIDADE
+# =========================================================
+def calcular_haversine_metros(lat1, lon1, lat2, lon2):
+    """
+    Calcula a distância em metros entre duas coordenadas geográficas
+    utilizando a fórmula de Haversine.
+    """
+    R = 6371000.0 # Raio da Terra em metros
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+
+    a = math.sin(delta_phi / 2.0) ** 2 + \
+        math.cos(phi1) * math.cos(phi2) * \
+        math.sin(delta_lambda / 2.0) ** 2
+    c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
+    return R * c
+
+def login_systemsat_conectividade():
+    """
+    Realiza login no SystemSat para auditoria de conectividade.
+    Tenta primeiro o endpoint direto de Login com Username/Password,
+    ou reutiliza login_systemsat() padrão.
+    """
+    username = os.environ.get("SYSTEMSAT_USERNAME")
+    password = os.environ.get("SYSTEMSAT_PASSWORD")
+    hash_auth = os.environ.get("SYSTEMSAT_HASH_AUTH")
+    
+    url = "https://integration.systemsatx.com.br/Login"
+    headers = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    
+    params = {"Username": username, "Password": password}
+    if hash_auth:
+        params["HashAuth"] = hash_auth
+
+    try:
+        res = requests.post(url, params=params, headers=headers, timeout=20)
+        res.raise_for_status()
+        token = res.json().get("AccessToken")
+        if token:
+            return token
+    except Exception as e:
+        print(f"[Conectividade] Falha login param: {e}")
+        
+    return login_systemsat()
+
+def buscar_historico_posicoes_systemsat(token_sys, placa, dias=15):
+    """
+    Busca o histórico completo de posições de um veículo no SystemSat via POST /Controlws/HistoryPosition/List.
+    Como a API do SystemSat possui um limite máximo por requisição (geralmente 1.000 posições),
+    esta função divide o período em janelas temporais menores (fatias de 2 dias) e/ou avança recursivamente
+    a partir da data do último registro retornado para coletar todas as posições sem perda de dados.
+    """
+    agora_utc4 = datetime.now(FUSO_RELATORIO)
+    inicio_utc4 = agora_utc4 - pd.Timedelta(days=dias)
+
+    url = "https://integration.systemsatx.com.br/Controlws/HistoryPosition/List"
+    headers = {
+        "Authorization": f"Bearer {token_sys}",
+        "Content-Type": "application/json",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+
+    # Dividimos em janelas de 2 dias para garantir granularidade e contornar o limite de 1000 posições
+    tamanho_janela_dias = 2
+    janela_atual_inicio = inicio_utc4
+    todas_posicoes = []
+    chaves_vistas = set() # Evitar duplicatas entre requisições
+
+    while janela_atual_inicio < agora_utc4:
+        janela_atual_fim = min(janela_atual_inicio + pd.Timedelta(days=tamanho_janela_dias), agora_utc4)
+        
+        cursor_data_inicio = janela_atual_inicio
+        sub_iteracao = 0
+        max_sub_iteracoes = 5 # Blindagem contra loops infinitos em sub-janela
+
+        while cursor_data_inicio < janela_atual_fim and sub_iteracao < max_sub_iteracoes:
+            sub_iteracao += 1
+            start_str = cursor_data_inicio.strftime("%Y-%m-%dT%H:%M:%S")
+            end_str = janela_atual_fim.strftime("%Y-%m-%dT%H:%M:%S")
+
+            payload = {
+                "TrackedUnitType": 1,
+                "TrackedUnitIntegrationCode": str(placa).strip().upper(),
+                "StartDatePosition": start_str,
+                "EndDatePosition": end_str
+            }
+
+            try:
+                res = requests.post(url, json=payload, headers=headers, timeout=60)
+                res.raise_for_status()
+                dados = res.json()
+
+                if isinstance(dados, list):
+                    lote = dados
+                elif isinstance(dados, dict):
+                    lote = dados.get("Positions") or dados.get("data") or []
+                else:
+                    lote = []
+
+                if not lote:
+                    break
+
+                novos_neste_lote = 0
+                ultima_data_lote = None
+
+                for p in lote:
+                    # Gera chave única por data + lat + lng para desduplicar
+                    data_ev = str(p.get("EventDate") or p.get("Date") or p.get("DataEvento") or "")
+                    lat = str(p.get("Latitude") or "")
+                    lng = str(p.get("Longitude") or "")
+                    chave = f"{data_ev}_{lat}_{lng}"
+
+                    if chave not in chaves_vistas:
+                        chaves_vistas.add(chave)
+                        todas_posicoes.append(p)
+                        novos_neste_lote += 1
+
+                    if data_ev:
+                        ultima_data_lote = data_ev
+
+                # Se atingiu o limite de 1000 posições na sub-janela e temos a data do último registro, avançamos o cursor
+                if len(lote) >= 990 and ultima_data_lote:
+                    try:
+                        dt_parsed = datetime.fromisoformat(ultima_data_lote.replace("Z", "+00:00"))
+                        if dt_parsed.tzinfo is None:
+                            dt_parsed = dt_parsed.replace(tzinfo=FUSO_RELATORIO)
+                        else:
+                            dt_parsed = dt_parsed.astimezone(FUSO_RELATORIO)
+                        
+                        # Se a nova data for posterior ao início anterior, avança 1 segundo
+                        if dt_parsed > cursor_data_inicio:
+                            cursor_data_inicio = dt_parsed + pd.Timedelta(seconds=1)
+                        else:
+                            break
+                    except Exception:
+                        break
+                else:
+                    break
+
+            except Exception as e:
+                print(f"[Conectividade] Erro ao buscar lote para {placa} ({start_str} até {end_str}): {e}")
+                break
+
+        janela_atual_inicio = janela_atual_fim
+
+    return todas_posicoes
+
+def analisar_posicoes_veiculo(posicoes_raw):
+    """
+    Processa e aplica as regras de negócio de auditoria de conectividade:
+    Regra 1: Sensor de Ignição Violado (> 3 posições com Velocity > 20 e Ignition == False)
+    Regra 2: Saltos Durante o Percurso (> 20% das transições consecutivas com distância > 300 metros)
+    """
+    if not posicoes_raw:
+        return {
+            "status_analise": "ALERTA",
+            "anomalias": ["Sem posições no período"],
+            "total_posicoes": 0,
+            "qtd_violacoes_ignicao": 0,
+            "perc_saltos": 0.0,
+            "posicoes_limpas": [],
+            "ultima_posicao_data": None
+        }
+
+    posicoes_limpas = []
+    for p in posicoes_raw:
+        lat = p.get("Latitude")
+        lng = p.get("Longitude")
+        if lat is None or lng is None:
+            continue
+        try:
+            lat = float(lat)
+            lng = float(lng)
+        except (ValueError, TypeError):
+            continue
+
+        velocity = p.get("Velocity") or p.get("Speed") or 0.0
+        try:
+            velocity = float(velocity)
+        except (ValueError, TypeError):
+            velocity = 0.0
+
+        ign_raw = p.get("Ignition")
+        if isinstance(ign_raw, bool):
+            ignition = ign_raw
+        elif isinstance(ign_raw, str):
+            ignition = ign_raw.strip().lower() in ["true", "1", "on", "ligado", "sim"]
+        elif isinstance(ign_raw, (int, float)):
+            ignition = bool(ign_raw == 1)
+        else:
+            ignition = False
+
+        event_date = p.get("EventDate") or p.get("Date") or p.get("DataEvento") or ""
+        
+        posicoes_limpas.append({
+            "lat": lat,
+            "lng": lng,
+            "velocity": velocity,
+            "ignition": ignition,
+            "eventDate": str(event_date)
+        })
+
+    total_pos = len(posicoes_limpas)
+    if total_pos == 0:
+        return {
+            "status_analise": "ALERTA",
+            "anomalias": ["Sem coordenadas válidas no período"],
+            "total_posicoes": 0,
+            "qtd_violacoes_ignicao": 0,
+            "perc_saltos": 0.0,
+            "posicoes_limpas": [],
+            "ultima_posicao_data": None
+        }
+
+    # Ordena cronologicamente se houver data
+    try:
+        posicoes_limpas.sort(key=lambda x: x.get("eventDate", ""))
+    except Exception:
+        pass
+
+    # Regra 1: Sensor de Ignição Violado (> 3 posições com Velocity > 20 e Ignition == False)
+    violacoes_ignicao = [
+        p for p in posicoes_limpas
+        if p["velocity"] > 20.0 and not p["ignition"]
+    ]
+    qtd_violacoes_ignicao = len(violacoes_ignicao)
+    tem_violacao_ignicao = (qtd_violacoes_ignicao > 3)
+
+    # Regra 2: Saltos Durante o Percurso (> 20% das posições com distância > 1000 metros entre pontos consecutivos)
+    qtd_saltos = 0
+    total_transicoes = max(total_pos - 1, 1)
+    for i in range(len(posicoes_limpas) - 1):
+        p1 = posicoes_limpas[i]
+        p2 = posicoes_limpas[i + 1]
+        dist_m = calcular_haversine_metros(p1["lat"], p1["lng"], p2["lat"], p2["lng"])
+        if dist_m > 1000.0:
+            qtd_saltos += 1
+
+    perc_saltos = (qtd_saltos / total_transicoes) * 100.0 if total_pos > 1 else 0.0
+    tem_saltos = (perc_saltos > 20.0 and total_pos >= 5)
+
+    anomalias = []
+    if tem_violacao_ignicao:
+        anomalias.append("Sensor de ignição violado")
+    if tem_saltos:
+        anomalias.append("SALTOS DURANTE O PERCURSO")
+
+    if tem_violacao_ignicao or tem_saltos:
+        status_analise = "ERRO"
+    else:
+        status_analise = "OK"
+
+    ultima_pos_data = posicoes_limpas[-1]["eventDate"] if posicoes_limpas else None
+
+    return {
+        "status_analise": status_analise,
+        "anomalias": anomalias,
+        "total_posicoes": total_pos,
+        "qtd_violacoes_ignicao": qtd_violacoes_ignicao,
+        "perc_saltos": round(perc_saltos, 2),
+        "posicoes_limpas": posicoes_limpas,
+        "ultima_posicao_data": ultima_pos_data
+    }
+
+def executar_auditoria_conectividade_background(token_agems, token_sys, dias=15):
+    """
+    Worker assíncrono executado em background para auditar a conectividade da frota.
+    """
+    global _conectividade_status
+    with _conectividade_lock:
+        _conectividade_status["status"] = "running"
+        _conectividade_status["log"] = []
+        _conectividade_status["progresso"] = 0
+        _conectividade_status["error"] = None
+
+    def log_c(msg):
+        with _conectividade_lock:
+            _conectividade_status["log"].append(msg)
+            print(f"[Conectividade Job] {msg}")
+
+    try:
+        log_c("🔍 Iniciando verificação de conectividade dos rastreadores...")
+        log_c(f"⏱️ Período de análise: últimos {dias} dias (Fuso UTC-4).")
+
+        # 1. Carregar lista de veículos da AGEMS e do SystemSat
+        veiculos_agems = buscar_todos_veiculos(token_agems)
+        empresas_regulares = buscar_empresas_regulares(token_agems)
+        pedidos_desat = buscar_pedidos_desativacao(token_agems)
+        rastreadores = buscar_posicoes_rastreadores(token_sys)
+
+        data_hoje = agora_utc().date()
+
+        with app.app_context():
+            # Mapeamento do banco mestre
+            veiculos_db = {v.placa: v for v in Veiculo.query.all()}
+            audits_existentes = {a.placa: a for a in VeiculoAudit.query.all()}
+
+            # Identificar veículos alvo com status "OK" e rastreador ativo
+            veiculos_alvo = []
+            for placa, dados in veiculos_agems.items():
+                dados_oc, motivo_desat = selecionar_ocorrencia_veiculo(dados, pedidos_desat.get(placa))
+                is_ativo = dados_oc.get("ativo", False)
+                empresa = dados_oc.get("empresa", "")
+                
+                has_vistoria = False
+                if dados_oc.get("vencimento_vistoria"):
+                    try:
+                        has_vistoria = data_vistoria_valida(dados_oc["vencimento_vistoria"], data_hoje)
+                    except Exception:
+                        has_vistoria = False
+
+                is_monitora_ok = (is_ativo and has_vistoria and (empresa in empresas_regulares) and (motivo_desat is None))
+                has_tracker = (placa in rastreadores)
+
+                # Condição excludente: Não analisar se já precisa de manutenção no banco ou no relatório
+                v_db = veiculos_db.get(placa)
+                ja_em_manutencao = False
+                if v_db and (v_db.precisa_manutencao or v_db.manutencao_manual):
+                    ja_em_manutencao = True
+                if audits_existentes.get(placa) and audits_existentes[placa].tipo_relatorio == "manutencao":
+                    ja_em_manutencao = True
+
+                if is_monitora_ok and has_tracker and not ja_em_manutencao:
+                    veiculos_alvo.append({
+                        "placa": placa,
+                        "prefixo": dados_oc.get("prefixo") or (v_db.prefixo if v_db else "") or "",
+                        "empresa": empresa
+                    })
+
+            total_encontrados = len(veiculos_alvo)
+            log_c(f"🚗 Veículos elegíveis encontrados (OK e com rastreador): {total_encontrados}")
+
+            # Limite de homologação se configurado
+            if LIMITE_HOMOLOGACAO_CONECTIVIDADE and LIMITE_HOMOLOGACAO_CONECTIVIDADE > 0:
+                veiculos_alvo = veiculos_alvo[:LIMITE_HOMOLOGACAO_CONECTIVIDADE]
+                log_c(f"🧪 [Modo Homologação Ativo] Limitado a {len(veiculos_alvo)} placas para teste.")
+
+            total_processar = len(veiculos_alvo)
+            with _conectividade_lock:
+                _conectividade_status["total"] = total_processar
+                _conectividade_status["atual"] = 0
+
+            # 2. Processamento de cada placa com a API SystemSat
+            for idx, item in enumerate(veiculos_alvo, start=1):
+                placa = item["placa"]
+                with _conectividade_lock:
+                    _conectividade_status["atual"] = idx
+                    _conectividade_status["placa_atual"] = placa
+                    _conectividade_status["progresso"] = int((idx / max(total_processar, 1)) * 100)
+
+                log_c(f"📡 [{idx}/{total_processar}] Buscando histórico da placa {placa}...")
+                posicoes_raw = buscar_historico_posicoes_systemsat(token_sys, placa, dias=dias)
+                resultado = analisar_posicoes_veiculo(posicoes_raw)
+
+                # Persistir / atualizar na tabela ConectividadeAudit
+                audit_con = ConectividadeAudit.query.filter_by(placa=placa).first()
+                if not audit_con:
+                    audit_con = ConectividadeAudit(placa=placa)
+                    db.session.add(audit_con)
+
+                audit_con.prefixo = item["prefixo"]
+                audit_con.empresa = item["empresa"]
+                audit_con.status_analise = resultado["status_analise"]
+                audit_con.anomalias = resultado["anomalias"]
+                audit_con.total_posicoes = resultado["total_posicoes"]
+                audit_con.qtd_violacoes_ignicao = resultado["qtd_violacoes_ignicao"]
+                audit_con.perc_saltos = resultado["perc_saltos"]
+                audit_con.posicoes_json = resultado["posicoes_limpas"]
+                audit_con.ultima_posicao_data = resultado["ultima_posicao_data"]
+                audit_con.analisado_em = agora_utc()
+                audit_con.dias_analisados = dias
+                db.session.commit()
+
+                if resultado["anomalias"]:
+                    log_c(f"⚠️ {placa}: Anomalias detectadas -> {', '.join(resultado['anomalias'])}")
+                else:
+                    log_c(f"✅ {placa}: Conectividade 100% OK ({resultado['total_posicoes']} posições).")
+
+            with _conectividade_lock:
+                _conectividade_status["status"] = "done"
+                _conectividade_status["ultima_execucao"] = agora_utc().astimezone(FUSO_RELATORIO).strftime("%d/%m/%Y às %H:%M:%S (UTC-4)")
+                _conectividade_status["progresso"] = 100
+
+            log_c("🎉 Auditoria de conectividade finalizada com sucesso!")
+
+    except Exception as exc:
+        with _conectividade_lock:
+            _conectividade_status["status"] = "error"
+            _conectividade_status["error"] = str(exc)
+        log_c(f"❌ Erro crítico no worker de conectividade: {exc}")
+
+@app.route("/conectividade")
+def conectividade():
+    if "logged_in" not in session:
+        return redirect(url_for("login"))
+    
+    with _conectividade_lock:
+        status_info = dict(_conectividade_status)
+    
+    # Busca os registros auditados no banco
+    registros = ConectividadeAudit.query.order_by(ConectividadeAudit.status_analise.desc(), ConectividadeAudit.placa.asc()).all()
+    
+    # Timestamp formatado em UTC-4
+    ultima_verificacao = status_info.get("ultima_execucao")
+    if not ultima_verificacao and registros:
+        mais_recente = max((r.analisado_em for r in registros if r.analisado_em), default=None)
+        if mais_recente:
+            if mais_recente.tzinfo is None:
+                mais_recente = mais_recente.replace(tzinfo=timezone.utc)
+            ultima_verificacao = mais_recente.astimezone(FUSO_RELATORIO).strftime("%d/%m/%Y às %H:%M:%S (UTC-4)")
+
+    mapbox_token = os.environ.get("MAPBOX_TOKEN", "")
+
+    return render_template(
+        "conectividade.html",
+        registros=registros,
+        status_info=status_info,
+        ultima_verificacao=ultima_verificacao or "Nenhuma verificação realizada",
+        limite_homologacao=LIMITE_HOMOLOGACAO_CONECTIVIDADE,
+        mapbox_token=mapbox_token,
+        email=session.get("email")
+    )
+
+@app.route("/conectividade/iniciar", methods=["POST"])
+def conectividade_iniciar():
+    if "logged_in" not in session:
+        return jsonify({"error": "Não autenticado"}), 401
+    
+    dias = int(request.form.get("dias", 15))
+    token_agems = session.get("token_agems")
+    token_sys = login_systemsat_conectividade()
+    
+    if not token_agems:
+        return jsonify({"error": "Token da AGEMS não encontrado. Faça login novamente."}), 400
+    if not token_sys:
+        return jsonify({"error": "Não foi possível autenticar no SystemSat."}), 400
+
+    threading.Thread(
+        target=executar_auditoria_conectividade_background,
+        args=(token_agems, token_sys, dias),
+        daemon=True
+    ).start()
+
+    return jsonify({"ok": True, "msg": "Auditoria de conectividade iniciada em background."})
+
+@app.route("/conectividade/status")
+def conectividade_status():
+    if "logged_in" not in session:
+        return jsonify({"error": "Não autenticado"}), 401
+    with _conectividade_lock:
+        return jsonify(dict(_conectividade_status))
+
+@app.route("/conectividade/posicoes/<placa>")
+def conectividade_posicoes(placa):
+    if "logged_in" not in session:
+        return jsonify({"error": "Não autenticado"}), 401
+    placa_limpa = limpar_placa(placa)
+    audit = ConectividadeAudit.query.filter_by(placa=placa_limpa).first()
+    if not audit:
+        return jsonify({"error": "Veículo não encontrado"}), 404
+    return jsonify({
+        "placa": audit.placa,
+        "prefixo": audit.prefixo,
+        "empresa": audit.empresa,
+        "anomalias": audit.anomalias,
+        "status_analise": audit.status_analise,
+        "posicoes": audit.posicoes_json or []
+    })
+
+@app.route("/conectividade/acao", methods=["POST"])
+def conectividade_acao():
+    if "logged_in" not in session:
+        return jsonify({"error": "Não autenticado"}), 401
+    
+    placa = request.form.get("placa")
+    acao = request.form.get("acao") # "OK" ou "NAO_OK"
+    
+    placa_limpa = limpar_placa(placa)
+    audit = ConectividadeAudit.query.filter_by(placa=placa_limpa).first()
+    v_mestre = Veiculo.query.filter_by(placa=placa_limpa).first()
+    
+    if not v_mestre:
+        v_mestre = Veiculo(placa=placa_limpa)
+        db.session.add(v_mestre)
+    
+    if audit:
+        audit.status_decisao = "MANUTENCAO" if acao == "NAO_OK" else "OK"
+
+    if acao == "NAO_OK":
+        # Marcar para manutenção
+        v_mestre.precisa_manutencao = True
+        v_mestre.manutencao_manual = True
+
+        erros_str = ", ".join(audit.anomalias) if (audit and audit.anomalias) else "Falha de conectividade"
+        motivo_manut = f"CONECTIVIDADE - ({erros_str})"
+
+        # Atualizar ou criar no relatório de manutenção
+        VeiculoAudit.query.filter_by(placa=placa_limpa, tipo_relatorio="instalacao").delete()
+        audit_manut = VeiculoAudit.query.filter_by(placa=placa_limpa, tipo_relatorio="manutencao").first()
+        if not audit_manut:
+            audit_manut = VeiculoAudit(
+                placa=placa_limpa,
+                prefixo=v_mestre.prefixo or (audit.prefixo if audit else ""),
+                empresa=v_mestre.empresa or (audit.empresa if audit else ""),
+                tipo_relatorio="manutencao",
+                motivo=motivo_manut,
+                observacao_mestre=v_mestre.observacao,
+                ultima_posicao=audit.ultima_posicao_data if audit else v_mestre.ultima_comunicacao
+            )
+            db.session.add(audit_manut)
+        else:
+            audit_manut.motivo = motivo_manut
+
+        db.session.commit()
+        recriar_cache_relatorio()
+        return jsonify({"ok": True, "msg": f"Veículo {placa_limpa} enviado para MANUTENÇÃO com motivo '{motivo_manut}'."})
+    
+    else: # "OK"
+        # Desmarca se estiver em manutenção
+        v_mestre.precisa_manutencao = False
+        v_mestre.manutencao_manual = False
+        VeiculoAudit.query.filter_by(placa=placa_limpa, tipo_relatorio="manutencao").delete()
+        db.session.commit()
+        recriar_cache_relatorio()
+        return jsonify({"ok": True, "msg": f"Veículo {placa_limpa} validado como OK."})
 
 with app.app_context():
     recriar_cache_relatorio()

@@ -22,6 +22,9 @@
             <a href="{{ url_for('roteirizacao') }}" class="nav-link {{ 'active' if request.endpoint == 'roteirizacao' }}">
                 <i class="fa-solid fa-route"></i> &nbsp; Roteirização
             </a>
+            <a href="{{ url_for('conectividade') }}" class="nav-link {{ 'active' if request.endpoint == 'conectividade' }}">
+                <i class="fa-solid fa-satellite-dish"></i> &nbsp; Conectividade
+            </a>
             <a href="{{ url_for('relatorio', tipo='instalacao') }}" class="nav-link {{ 'active' if tipo == 'instalacao' }}">
                 <i class="fa-solid fa-tools"></i> &nbsp; Instalação
             </a>

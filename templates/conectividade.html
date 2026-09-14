@@ -1,224 +1,143 @@
 {% extends "layout.html" %}
 
-{% block content %}
-<!-- Estilos do Mapbox GL -->
+{% block head %}
 <link href="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css" rel="stylesheet">
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.js"></script>
+{% endblock %}
 
-<style>
-    .badge {
-        display: inline-block;
-        padding: 0.25rem 0.6rem;
-        font-size: 0.75rem;
-        font-weight: 700;
-        border-radius: 9999px;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-    }
-    .badge-ok { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
-    .badge-alerta { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
-    .badge-erro { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
-
-    .anomaly-tag {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.3rem;
-        padding: 0.2rem 0.5rem;
-        border-radius: 0.375rem;
-        font-size: 0.75rem;
-        font-weight: 600;
-        background: #fef2f2;
-        color: #991b1b;
-        border: 1px solid #fecaca;
-        margin: 2px 2px;
-    }
-
-    .btn-action {
-        padding: 0.35rem 0.7rem;
-        font-size: 0.8rem;
-        font-weight: 600;
-        border-radius: 0.375rem;
-        border: none;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.3rem;
-        transition: all 0.2s;
-    }
-    .btn-action-ok { background: #22c55e; color: white; }
-    .btn-action-ok:hover { background: #16a34a; }
-    .btn-action-danger { background: #ef4444; color: white; }
-    .btn-action-danger:hover { background: #dc2626; }
-    .btn-action-map { background: #3b82f6; color: white; }
-    .btn-action-map:hover { background: #2563eb; }
-
-    /* Modal Mapbox */
-    .modal-overlay {
-        display: none;
-        position: fixed;
-        top: 0; left: 0; width: 100vw; height: 100vh;
-        background: rgba(15, 23, 42, 0.75);
-        z-index: 1000;
-        backdrop-filter: blur(4px);
-        align-items: center;
-        justify-content: center;
-    }
-    .modal-content {
-        background: white;
-        width: 90vw;
-        max-width: 1100px;
-        height: 85vh;
-        border-radius: 1rem;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-    }
-    .modal-header {
-        padding: 1rem 1.5rem;
-        background: #0f172a;
-        color: white;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    .modal-body {
-        flex: 1;
-        position: relative;
-    }
-    #mapConectividade {
-        width: 100%;
-        height: 100%;
-    }
-    .map-legend {
-        position: absolute;
-        bottom: 20px;
-        right: 20px;
-        background: white;
-        padding: 10px 14px;
-        border-radius: 8px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.15);
-        font-size: 0.75rem;
-        z-index: 10;
-        line-height: 1.5;
-    }
-</style>
-
-<!-- Header & Título -->
-<div style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;">
-    <div>
-        <h1 style="display: flex; align-items: center; gap: 0.5rem;">
-            <i class="fa-solid fa-satellite-dish" style="color: var(--primary);"></i>
-            Auditoria de Conectividade
-        </h1>
-        <p style="color: var(--secondary); margin-top: 0.25rem;">
-            Análise automática da qualidade de comunicação dos rastreadores (Violação de Ignição e Saltos de Percurso).
-        </p>
+{% block content %}
+<!-- ── Page Header ─────────────────────────────────────────────────────────── -->
+<div class="page-header">
+    <div class="page-header-left">
+        <h1><i class="fa-solid fa-tower-broadcast"></i> Auditoria de Conectividade</h1>
+        <p class="page-subtitle">Análise automática da qualidade de comunicação dos rastreadores (Violação de Ignição e Saltos de Percurso)</p>
     </div>
-
-    <!-- Timestamp UTC-4 e Flag de Homologação -->
-    <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem;">
-        <div style="background: #f1f5f9; padding: 0.4rem 0.8rem; border-radius: 0.5rem; font-size: 0.85rem; color: #334155; border-left: 3px solid var(--primary);">
-            <i class="fa-regular fa-clock"></i> Última Verificação: <strong id="lblUltimaVerificacao">{{ ultima_verificacao }}</strong>
+    <div class="header-actions">
+        <div class="status-pill">
+            <i class="fa-regular fa-clock" style="color:#6b7280;"></i>
+            Última verificação: <strong id="lblUltimaVerificacao">{{ ultima_verificacao }}</strong>
         </div>
         {% if limite_homologacao %}
-        <div style="background: #fef3c7; color: #92400e; padding: 0.2rem 0.6rem; border-radius: 0.375rem; font-size: 0.75rem; font-weight: 600; border: 1px solid #fde68a;">
-            <i class="fa-solid fa-flask"></i> Modo Homologação Ativo: Limite de {{ limite_homologacao }} placas
+        <div class="hom-badge">
+            <i class="fa-solid fa-flask"></i>
+            Homologação: {{ limite_homologacao }} placas
         </div>
         {% endif %}
     </div>
 </div>
 
-<!-- Card de Controles e Disparo do Worker -->
-<div class="report-section no-print" style="margin-bottom: 1.5rem;">
-    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
-        <div style="display: flex; align-items: center; gap: 1rem;">
-            <label for="inpDias" style="font-weight: 600; font-size: 0.9rem; color: #334155;">
-                <i class="fa-solid fa-calendar-days"></i> Histórico a Analisar:
+<!-- ── Controles do Worker ─────────────────────────────────────────────────── -->
+<div class="card no-print">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;">
+        <!-- Período -->
+        <div style="display:flex;align-items:center;gap:0.75rem;">
+            <label for="inpDias" style="margin:0;font-weight:600;font-size:0.875rem;color:#374151;">
+                <i class="fa-solid fa-calendar-days" style="color:#6b7280;margin-right:0.35rem;"></i>
+                Histórico a analisar:
             </label>
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <input type="number" id="inpDias" value="15" min="1" max="90" 
-                       style="width: 80px; padding: 0.5rem; border-radius: 0.375rem; border: 1px solid #cbd5e1; font-weight: bold; text-align: center;">
-                <span style="font-size: 0.85rem; color: var(--secondary);">dias</span>
-            </div>
+            <input
+                type="number"
+                id="inpDias"
+                value="15"
+                min="1"
+                max="90"
+                style="width:80px;padding:0.5rem 0.65rem;border:1px solid #d1d5db;border-radius:8px;font-weight:700;text-align:center;font-size:0.9rem;outline:none;"
+                onfocus="this.style.borderColor='#1a56db';"
+                onblur="this.style.borderColor='#d1d5db';"
+            >
+            <span style="font-size:0.85rem;color:#6b7280;">dias</span>
         </div>
 
-        <div>
-            <button id="btnIniciar" onclick="iniciarAuditoriaConectividade()" class="btn btn-primary" 
-                    style="display: flex; align-items: center; gap: 0.5rem; padding: 0.7rem 1.4rem;"
-                    {{ 'disabled' if status_info.status == 'running' }}>
-                <i class="fa-solid fa-play"></i> Iniciar Análise em Background
+        <!-- Botões de controle -->
+        <div style="display:flex;gap:0.65rem;">
+            <button
+                id="btnIniciar"
+                onclick="iniciarAuditoriaConectividade()"
+                class="btn btn-primary"
+                {{ 'disabled' if status_info.status == 'running' }}
+            >
+                <i class="fa-solid fa-play"></i>
+                {{ 'Retomar análise' if status_info.status in ('paused', 'error') else 'Iniciar análise' }}
+            </button>
+            <button
+                id="btnCancelar"
+                onclick="cancelarAuditoriaConectividade()"
+                class="btn btn-danger"
+                {{ '' if status_info.status == 'running' else 'disabled' }}
+            >
+                <i class="fa-solid fa-stop"></i> Cancelar
             </button>
         </div>
     </div>
 
-    <!-- Progresso e Console de Log em Background -->
-    <div id="boxStatusConectividade" style="margin-top: 1.2rem; display: {{ 'block' if status_info.status == 'running' else 'none' }};">
-        <div style="display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 0.4rem;">
-            <span id="lblStatusWorker" style="font-weight: 600; color: var(--primary);">Processando veículos...</span>
-            <span id="lblProgressoPerc" style="font-weight: bold;">0%</span>
+    <!-- Progresso e Log -->
+    <div id="boxStatusConectividade" style="margin-top:1.25rem;display:{{ 'block' if status_info.status in ('running', 'paused', 'error') else 'none' }};">
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.85rem;margin-bottom:0.45rem;">
+            <span id="lblStatusWorker" style="font-weight:600;color:#1a56db;">Processando veículos...</span>
+            <span id="lblProgressoPerc" style="font-weight:700;color:#374151;">0%</span>
         </div>
-        <div style="background: #e2e8f0; border-radius: 1rem; height: 10px; margin-bottom: 0.8rem; overflow: hidden;">
-            <div id="barProgressoConectividade" style="background: var(--primary); height: 100%; width: 0%; transition: width 0.3s;"></div>
+        <div class="progress-track">
+            <div id="barProgressoConectividade" class="progress-bar" style="width:0%;"></div>
         </div>
-        <div id="logConsoleConectividade" style="background: #0f172a; color: #38bdf8; padding: 0.8rem 1rem; border-radius: 0.5rem; font-family: monospace; font-size: 0.8rem; max-height: 160px; overflow-y: auto;">
-            {% for line in status_info.log %}
-                <div>> {{ line }}</div>
-            {% endfor %}
+        <div id="logConsoleConectividade" class="terminal-window">
+            {% for line in status_info.log %}<div>&gt; {{ line }}</div>{% endfor %}
         </div>
     </div>
 </div>
 
-<!-- Tabela de Resultados da Auditoria -->
-<div class="report-section">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-        <h3 style="color: #1e293b;">Veículos Analisados ({{ registros|length }})</h3>
-        <span style="font-size: 0.8rem; color: var(--secondary);">
-            Critérios: >3 posições (v > 20 km/h e ignição OFF) | Saltos > 1000m (> 20% das posições)
+<!-- ── Tabela de Resultados ───────────────────────────────────────────────── -->
+<div class="card">
+    <div class="section-header">
+        <h3 class="section-title">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            Problemas encontrados ({{ registros|length }})
+        </h3>
+        <span style="font-size:0.8rem;color:#6b7280;">
+            Critérios: &gt;3 posições (v &gt; 20 km/h e ignição OFF) | Saltos &gt;1000m (&gt;20% das posições)
         </span>
     </div>
 
     {% if registros %}
-    <div style="overflow-x: auto;">
+    <div class="table-responsive">
         <table>
             <thead>
                 <tr>
                     <th>Placa</th>
                     <th>Prefixo</th>
                     <th>Empresa</th>
-                    <th style="text-align: center;">Total Posições</th>
-                    <th style="text-align: center;">Ignição Violada</th>
-                    <th style="text-align: center;">% Saltos (>1000m)</th>
-                    <th style="text-align: center;">Diagnóstico</th>
-                    <th>Anomalias Detectadas</th>
-                    <th style="text-align: center;" class="no-print">Ações</th>
+                    <th style="text-align:center;">Total Posições</th>
+                    <th style="text-align:center;">Ignição Violada</th>
+                    <th style="text-align:center;">% Saltos (&gt;1000m)</th>
+                    <th style="text-align:center;">Diagnóstico</th>
+                    <th>Anomalias</th>
+                    <th style="text-align:center;" class="no-print">Ações</th>
                 </tr>
             </thead>
             <tbody>
                 {% for r in registros %}
                 <tr id="row-{{ r.placa }}">
-                    <td><strong style="font-size: 0.95rem;">{{ r.placa }}</strong></td>
-                    <td>{{ r.prefixo or '-' }}</td>
-                    <td style="font-size: 0.85rem;">{{ r.empresa }}</td>
-                    <td style="text-align: center; font-weight: 600;">{{ r.total_posicoes }}</td>
-                    
-                    <td style="text-align: center;">
+                    <td><strong style="letter-spacing:0.02em;">{{ r.placa }}</strong></td>
+                    <td style="color:#6b7280;">{{ r.prefixo or '—' }}</td>
+                    <td style="font-size:0.82rem;">{{ r.empresa }}</td>
+                    <td style="text-align:center;font-weight:600;">{{ r.total_posicoes }}</td>
+
+                    <td style="text-align:center;">
                         {% if r.qtd_violacoes_ignicao > 3 %}
-                            <span style="color: #dc2626; font-weight: bold;">{{ r.qtd_violacoes_ignicao }} pos.</span>
+                            <span style="color:#b91c1c;font-weight:700;">{{ r.qtd_violacoes_ignicao }} pos.</span>
                         {% else %}
-                            <span style="color: #16a34a;">{{ r.qtd_violacoes_ignicao }}</span>
+                            <span style="color:#047857;">{{ r.qtd_violacoes_ignicao }}</span>
                         {% endif %}
                     </td>
 
-                    <td style="text-align: center;">
+                    <td style="text-align:center;">
                         {% if r.perc_saltos > 20.0 and r.total_posicoes >= 5 %}
-                            <span style="color: #dc2626; font-weight: bold;">{{ r.perc_saltos }}%</span>
+                            <span style="color:#b91c1c;font-weight:700;">{{ r.perc_saltos }}%</span>
                         {% else %}
-                            <span style="color: #16a34a;">{{ r.perc_saltos }}%</span>
+                            <span style="color:#047857;">{{ r.perc_saltos }}%</span>
                         {% endif %}
                     </td>
 
-                    <td style="text-align: center;">
+                    <td style="text-align:center;">
                         {% if r.status_analise == 'OK' %}
                             <span class="badge badge-ok"><i class="fa-solid fa-check"></i> OK</span>
                         {% elif r.status_analise == 'ERRO' %}
@@ -231,25 +150,27 @@
                     <td>
                         {% if r.anomalias %}
                             {% for anomalia in r.anomalias %}
-                                <span class="anomaly-tag">
-                                    <i class="fa-solid fa-circle-xmark"></i> {{ anomalia }}
-                                </span>
+                            <span class="anomaly-tag">
+                                <i class="fa-solid fa-circle-xmark"></i> {{ anomalia }}
+                            </span>
                             {% endfor %}
                         {% else %}
-                            <span style="color: #16a34a; font-size: 0.85rem;"><i class="fa-solid fa-check-circle"></i> Comunicação íntegra</span>
+                            <span style="color:#047857;font-size:0.82rem;">
+                                <i class="fa-solid fa-check-circle"></i> Comunicação íntegra
+                            </span>
                         {% endif %}
                     </td>
 
-                    <td style="text-align: center;" class="no-print">
-                        <div style="display: flex; gap: 0.4rem; justify-content: center;">
-                            <button onclick="abrirModalMapa('{{ r.placa }}')" class="btn-action btn-action-map" title="Visualizar trajeto e pontos no mapa">
-                                <i class="fa-solid fa-map-location-dot"></i> Ver no Mapa
+                    <td style="text-align:center;" class="no-print">
+                        <div style="display:flex;gap:0.35rem;justify-content:center;flex-wrap:wrap;">
+                            <button onclick="abrirModalMapa('{{ r.placa }}')" class="btn-action btn-action-map" title="Visualizar trajeto no mapa">
+                                <i class="fa-solid fa-map-location-dot"></i> Mapa
                             </button>
-                            <button onclick="julgarVeiculo('{{ r.placa }}', 'OK')" class="btn-action btn-action-ok" title="Validar veículo como OK">
+                            <button onclick="julgarVeiculo('{{ r.placa }}', 'OK')" class="btn-action btn-action-ok" title="Validar como OK">
                                 <i class="fa-solid fa-thumbs-up"></i> OK
                             </button>
-                            <button onclick="julgarVeiculo('{{ r.placa }}', 'NAO_OK')" class="btn-action btn-action-danger" title="Enviar diretamente para Manutenção">
-                                <i class="fa-solid fa-wrench"></i> NÃO OK
+                            <button onclick="julgarVeiculo('{{ r.placa }}', 'NAO_OK')" class="btn-action btn-action-danger" title="Enviar para manutenção">
+                                <i class="fa-solid fa-wrench"></i> Não OK
                             </button>
                         </div>
                     </td>
@@ -259,48 +180,49 @@
         </table>
     </div>
     {% else %}
-    <div style="text-align: center; padding: 3rem 1rem; color: var(--secondary);">
-        <i class="fa-solid fa-satellite" style="font-size: 2.5rem; margin-bottom: 1rem; color: #94a3b8;"></i>
-        <p style="font-size: 1rem; font-weight: 500;">Nenhuma análise realizada ainda.</p>
-        <p style="font-size: 0.85rem;">Clique em <strong>"Iniciar Análise em Background"</strong> para auditar os veículos com status OK.</p>
+    <div class="empty-state">
+        <i class="fa-solid fa-satellite"></i>
+        <p>Nenhuma análise realizada ainda.</p>
+        <p style="font-size:0.82rem;margin-top:0.35rem;color:#9ca3af;">Clique em <strong>Iniciar análise</strong> para auditar os veículos com status OK.</p>
     </div>
     {% endif %}
 </div>
 
-<!-- Modal Mapbox GL -->
+<!-- ── Modal Mapa Mapbox ──────────────────────────────────────────────────── -->
 <div id="modalMapa" class="modal-overlay">
     <div class="modal-content">
         <div class="modal-header">
             <div>
-                <h3 id="modalPlacaTitulo" style="font-size: 1.2rem; display: flex; align-items: center; gap: 0.5rem;">
+                <h3 id="modalPlacaTitulo" style="font-size:1.1rem;display:flex;align-items:center;gap:0.5rem;color:#fff;">
                     <i class="fa-solid fa-map"></i> Inspeção Visual de Trajetória
                 </h3>
-                <span id="modalPlacaSub" style="font-size: 0.8rem; color: #94a3b8;"></span>
+                <span id="modalPlacaSub" style="font-size:0.8rem;color:#94a3b8;"></span>
             </div>
-            <button onclick="fecharModalMapa()" style="background: none; border: none; color: white; font-size: 1.5rem; cursor: pointer;">
+            <button onclick="fecharModalMapa()" style="background:none;border:none;color:#94a3b8;font-size:1.35rem;cursor:pointer;padding:0.25rem;" title="Fechar">
                 <i class="fa-solid fa-xmark"></i>
             </button>
         </div>
         <div class="modal-body">
             <div id="mapConectividade"></div>
             <div class="map-legend">
-                <strong><i class="fa-solid fa-layer-group"></i> Legenda (Foco em Anomalias):</strong><br>
-                <span style="color: #dc2626; font-size: 14px;">●</span> Ignição Violada (v &gt; 20km/h &amp; OFF)<br>
-                <span style="color: #3b82f6;">●</span> Posição de Contexto (1 antes / 1 depois)<br>
-                <span style="color: #eab308; font-size: 14px;">🟨</span> Salto de Comunicação (&gt; 1000m)<br>
-                <span style="color: #eab308; font-weight: bold;">╌╌</span> Linha do Salto (&gt; 1000m)<br>
-                <span style="color: #3b82f6;">―</span> Linha de Contexto da Ignição
+                <strong><i class="fa-solid fa-layer-group"></i> Legenda:</strong><br>
+                <span style="color:#dc2626;">&#9679;</span> Ignição Violada (v &gt; 20km/h e OFF)<br>
+                <span style="color:#3b82f6;">&#9679;</span> Ponto de Contexto (vizinho)<br>
+                <span style="color:#eab308;">&#9632;</span> Salto &gt; 1000m<br>
+                <span style="color:#eab308;font-weight:bold;">- -</span> Linha do Salto<br>
+                <span style="color:#3b82f6;">&#8212;</span> Linha de Contexto
             </div>
         </div>
     </div>
 </div>
+{% endblock %}
 
+{% block scripts %}
 <script>
     mapboxgl.accessToken = '{{ mapbox_token }}';
     let mapInstance = null;
     let mapMarkers = [];
 
-    // Iniciar Auditoria em Background
     function iniciarAuditoriaConectividade() {
         const dias = document.getElementById('inpDias').value || 15;
         const btn = document.getElementById('btnIniciar');
@@ -331,14 +253,30 @@
         });
     }
 
-    // Polling do Status do Worker em Background
+    function cancelarAuditoriaConectividade() {
+        const btn = document.getElementById('btnCancelar');
+        btn.disabled = true;
+        fetch('/conectividade/cancelar', { method: 'POST' })
+            .then(res => res.json())
+            .then(data => {
+                if (!data.ok) {
+                    alert(data.error || 'Não foi possível cancelar a auditoria.');
+                    btn.disabled = false;
+                }
+            })
+            .catch(() => {
+                alert('Erro de conexão ao solicitar cancelamento.');
+                btn.disabled = false;
+            });
+    }
+
     function monitorarStatusConectividade() {
         fetch('/conectividade/status')
         .then(res => res.json())
         .then(data => {
             const logConsole = document.getElementById('logConsoleConectividade');
             if (data.log && data.log.length > 0) {
-                logConsole.innerHTML = data.log.map(line => `<div>> ${line}</div>`).join('');
+                logConsole.innerHTML = data.log.map(line => `<div>&gt; ${line}</div>`).join('');
                 logConsole.scrollTop = logConsole.scrollHeight;
             }
 
@@ -352,28 +290,27 @@
 
             if (data.status === 'running') {
                 setTimeout(monitorarStatusConectividade, 1500);
+            } else if (data.status === 'paused') {
+                document.getElementById('lblStatusWorker').innerText = 'Auditoria cancelada. Clique em Iniciar para retomar.';
+                document.getElementById('btnIniciar').disabled = false;
+                document.getElementById('btnCancelar').disabled = true;
             } else if (data.status === 'done') {
                 document.getElementById('lblStatusWorker').innerText = 'Auditoria concluída com sucesso!';
-                setTimeout(() => {
-                    window.location.reload();
-                }, 1200);
+                setTimeout(() => { window.location.reload(); }, 1200);
             } else if (data.status === 'error') {
                 alert('Erro na auditoria: ' + data.error);
                 document.getElementById('btnIniciar').disabled = false;
             }
         })
-        .catch(() => {
-            setTimeout(monitorarStatusConectividade, 3000);
-        });
+        .catch(() => { setTimeout(monitorarStatusConectividade, 3000); });
     }
 
-    {% if status_info.status == 'running' %}
+    {% if status_info.status in ('running', 'paused', 'error') %}
         monitorarStatusConectividade();
     {% endif %}
 
-    // Ações de Julgamento Operacional (OK e NÃO OK)
     function julgarVeiculo(placa, acao) {
-        const msgConfirm = acao === 'NAO_OK' 
+        const msgConfirm = acao === 'NAO_OK'
             ? `Deseja enviar o veículo ${placa} para MANUTENÇÃO com o motivo da anomalia detectada?`
             : `Deseja validar o veículo ${placa} como OK?`;
 
@@ -393,18 +330,15 @@
                 alert(data.msg);
                 const row = document.getElementById('row-' + placa);
                 if (row) {
-                    row.style.background = acao === 'NAO_OK' ? '#fee2e2' : '#dcfce7';
+                    row.style.background = acao === 'NAO_OK' ? '#fef2f2' : '#ecfdf5';
                 }
             } else {
                 alert('Erro ao processar ação: ' + (data.error || 'Erro desconhecido'));
             }
         })
-        .catch(err => {
-            alert('Erro de comunicação com o servidor.');
-        });
+        .catch(err => { alert('Erro de comunicação com o servidor.'); });
     }
 
-    // Modal e Renderização Mapbox GL
     function abrirModalMapa(placa) {
         document.getElementById('modalPlacaTitulo').innerHTML = `<i class="fa-solid fa-map"></i> Inspeção Visual: Placa <strong>${placa}</strong>`;
         document.getElementById('modalPlacaSub').innerText = 'Carregando telemetria e coordenadas...';
@@ -417,9 +351,7 @@
             document.getElementById('modalPlacaSub').innerText = `${data.empresa} | Total de ${posicoes.length} posições no período | Diagnóstico: ${data.status_analise}`;
             renderizarMapa(posicoes);
         })
-        .catch(err => {
-            alert('Erro ao carregar dados de posição para a placa.');
-        });
+        .catch(err => { alert('Erro ao carregar dados de posição para a placa.'); });
     }
 
     function fecharModalMapa() {
@@ -430,7 +362,6 @@
         }
     }
 
-    // Cálculo de Haversine no frontend em metros
     function calcularDistanciaMetrosJS(lat1, lon1, lat2, lon2) {
         const R = 6371000.0;
         const toRad = deg => (deg * Math.PI) / 180.0;
@@ -444,7 +375,6 @@
     }
 
     function renderizarMapa(posicoes) {
-        // Coordenadas padrão Campo Grande / MS se vazio
         let center = [-54.6167, -20.4428];
         let zoom = 12;
 
@@ -452,7 +382,6 @@
             center = [posicoes[0].lng, posicoes[0].lat];
         }
 
-        // Limpa marcadores anteriores
         if (mapMarkers && mapMarkers.length > 0) {
             mapMarkers.forEach(m => m.remove());
             mapMarkers = [];
@@ -467,22 +396,20 @@
             const total = posicoes.length;
             const bounds = new mapboxgl.LngLatBounds();
 
-            // 1. Identificar índices de anomalias
-            const jumpSegments = [];         // Linhas dos saltos
-            const jumpPointIndices = new Set(); // Índices de início e fim dos saltos
-            const ignitionPointIndices = new Set(); // Índices de ignição violada
-            const contextPointIndices = new Set();  // 1 antes e 1 depois da ignição violada
-            const ignitionContextSegments = []; // Linhas conectando o ponto de violação aos seus vizinhos
+            const jumpSegments = [];
+            const jumpPointIndices = new Set();
+            const ignitionPointIndices = new Set();
+            const contextPointIndices = new Set();
+            const ignitionContextSegments = [];
 
-            // A. Detectar saltos > 1000m (início e fim)
             for (let i = 0; i < total - 1; i++) {
                 const p1 = posicoes[i];
                 const p2 = posicoes[i + 1];
                 const dist = calcularDistanciaMetrosJS(p1.lat, p1.lng, p2.lat, p2.lng);
 
                 if (dist > 1000.0) {
-                    jumpPointIndices.add(i);     // Início do salto
-                    jumpPointIndices.add(i + 1); // Fim do salto
+                    jumpPointIndices.add(i);
+                    jumpPointIndices.add(i + 1);
                     jumpSegments.push({
                         coords: [[p1.lng, p1.lat], [p2.lng, p2.lat]],
                         distMetros: Math.round(dist)
@@ -490,19 +417,16 @@
                 }
             }
 
-            // B. Detectar violações de ignição (v > 20 km/h & ignição OFF) + 1 antes e 1 depois
             for (let i = 0; i < total; i++) {
                 const p = posicoes[i];
                 const isViolacao = (p.velocity > 20.0 && !p.ignition);
 
                 if (isViolacao) {
                     ignitionPointIndices.add(i);
-                    // 1 antes
                     if (i > 0) {
                         contextPointIndices.add(i - 1);
                         ignitionContextSegments.push([[posicoes[i - 1].lng, posicoes[i - 1].lat], [p.lng, p.lat]]);
                     }
-                    // 1 depois
                     if (i < total - 1) {
                         contextPointIndices.add(i + 1);
                         ignitionContextSegments.push([[p.lng, p.lat], [posicoes[i + 1].lng, posicoes[i + 1].lat]]);
@@ -510,20 +434,17 @@
                 }
             }
 
-            // Conjunto total de índices selecionados para plotagem no mapa
             const allSelectedIndices = new Set([
                 ...jumpPointIndices,
                 ...ignitionPointIndices,
                 ...contextPointIndices
             ]);
 
-            // Se o veículo for 100% OK e não tiver anomalias, plota apenas o primeiro e último ponto com rota resumida
             if (allSelectedIndices.size === 0) {
                 allSelectedIndices.add(0);
                 if (total > 1) allSelectedIndices.add(total - 1);
             }
 
-            // 2. Plotar marcadores estritamente dos pontos filtrados
             allSelectedIndices.forEach(idx => {
                 const p = posicoes[idx];
                 const coord = [p.lng, p.lat];
@@ -536,21 +457,21 @@
                 const el = document.createElement('div');
                 el.className = 'custom-marker';
 
-                let cor = '#3b82f6'; // Azul para ponto de contexto
+                let cor = '#3b82f6';
                 let tamanho = '12px';
                 let borda = '2px solid white';
                 let boxSh = '0 2px 5px rgba(0,0,0,0.3)';
 
                 if (isViolacao) {
-                    cor = '#dc2626'; // Vermelho
+                    cor = '#dc2626';
                     tamanho = '16px';
                     borda = '3px solid white';
-                    boxSh = '0 0 10px rgba(220, 38, 38, 0.8)';
+                    boxSh = '0 0 10px rgba(220,38,38,0.8)';
                 } else if (isSalto) {
                     cor = p.ignition ? '#16a34a' : '#64748b';
                     tamanho = '16px';
-                    borda = '3px solid #eab308'; // Destaque Amarelo de Salto
-                    boxSh = '0 0 10px rgba(234, 179, 8, 0.9)';
+                    borda = '3px solid #eab308';
+                    boxSh = '0 0 10px rgba(234,179,8,0.9)';
                 } else if (isContexto) {
                     cor = p.ignition ? '#16a34a' : '#64748b';
                     tamanho = '11px';
@@ -567,24 +488,24 @@
 
                 let tagEspecial = '';
                 if (isViolacao) {
-                    tagEspecial = `<div style="margin-top: 4px; padding: 2px 6px; background: #fee2e2; border: 1px solid #fca5a5; border-radius: 4px; color: #b91c1c; font-weight: bold; font-size: 11px;">⚠️ Sensor de Ignição Violado!</div>`;
+                    tagEspecial = `<div style="margin-top:4px;padding:2px 6px;background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;color:#b91c1c;font-weight:bold;font-size:11px;">Sensor de Ignicao Violado!</div>`;
                 } else if (isSalto) {
-                    tagEspecial = `<div style="margin-top: 4px; padding: 2px 6px; background: #fef9c3; border: 1px solid #fde047; border-radius: 4px; color: #854d0e; font-weight: bold; font-size: 11px;">🟨 Ponto de Início / Fim de SALTO &gt; 1000m</div>`;
+                    tagEspecial = `<div style="margin-top:4px;padding:2px 6px;background:#fef9c3;border:1px solid #fde047;border-radius:4px;color:#854d0e;font-weight:bold;font-size:11px;">Ponto de Inicio/Fim de SALTO &gt; 1000m</div>`;
                 } else if (isContexto) {
-                    tagEspecial = `<div style="margin-top: 4px; padding: 2px 6px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; color: #1e40af; font-size: 11px;">ℹ️ Ponto de Contexto (Vizinho à Violação)</div>`;
+                    tagEspecial = `<div style="margin-top:4px;padding:2px 6px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:4px;color:#1e40af;font-size:11px;">Ponto de Contexto (Vizinho a Violacao)</div>`;
                 }
 
                 const popupContent = `
-                    <div style="font-family: sans-serif; font-size: 12px; line-height: 1.4;">
+                    <div style="font-family:sans-serif;font-size:12px;line-height:1.5;">
                         <strong>Ponto #${idx + 1} de ${total}</strong><br>
-                        📅 Data: ${p.eventDate || '-'}<br>
-                        ⚡ Velocidade: <strong>${p.velocity} km/h</strong><br>
-                        🔑 Ignição: <strong>${p.ignition ? '<span style="color:#16a34a;">LIGADA</span>' : '<span style="color:#dc2626;">DESLIGADA</span>'}</strong><br>
+                        Data: ${p.eventDate || '-'}<br>
+                        Velocidade: <strong>${p.velocity} km/h</strong><br>
+                        Ignicao: <strong>${p.ignition ? '<span style="color:#16a34a;">LIGADA</span>' : '<span style="color:#dc2626;">DESLIGADA</span>'}</strong><br>
                         ${tagEspecial}
                     </div>
                 `;
 
-                const popup = new mapboxgl.Popup({ 
+                const popup = new mapboxgl.Popup({
                     offset: 15,
                     closeButton: false,
                     closeOnClick: false
@@ -595,89 +516,47 @@
                     .setPopup(popup)
                     .addTo(mapInstance);
 
-                // Mouse Hover (exibe ao passar o mouse e oculta ao sair)
-                el.addEventListener('mouseenter', () => {
-                    marker.togglePopup();
-                });
-                el.addEventListener('mouseleave', () => {
-                    if (popup.isOpen()) {
-                        marker.togglePopup();
-                    }
-                });
+                el.addEventListener('mouseenter', () => { marker.togglePopup(); });
+                el.addEventListener('mouseleave', () => { if (popup.isOpen()) { marker.togglePopup(); } });
 
                 mapMarkers.push(marker);
             });
 
-            // 3. GeoJSON para Linhas dos Saltos (Amarelo / Tracejado)
             const geojsonJumps = {
                 'type': 'FeatureCollection',
                 'features': jumpSegments.map(item => ({
                     'type': 'Feature',
-                    'geometry': {
-                        'type': 'LineString',
-                        'coordinates': item.coords
-                    }
+                    'geometry': { 'type': 'LineString', 'coordinates': item.coords }
                 }))
             };
 
-            // 4. GeoJSON para Linhas de Contexto da Ignição (Azul)
             const geojsonContext = {
                 'type': 'FeatureCollection',
                 'features': ignitionContextSegments.map(coords => ({
                     'type': 'Feature',
-                    'geometry': {
-                        'type': 'LineString',
-                        'coordinates': coords
-                    }
+                    'geometry': { 'type': 'LineString', 'coordinates': coords }
                 }))
             };
 
-            // Camada de Saltos (Amarelo)
             if (mapInstance.getSource('route-jumps')) {
                 mapInstance.getSource('route-jumps').setData(geojsonJumps);
             } else {
-                mapInstance.addSource('route-jumps', {
-                    'type': 'geojson',
-                    'data': geojsonJumps
-                });
+                mapInstance.addSource('route-jumps', { 'type': 'geojson', 'data': geojsonJumps });
                 mapInstance.addLayer({
-                    'id': 'route-line-jumps',
-                    'type': 'line',
-                    'source': 'route-jumps',
-                    'layout': {
-                        'line-join': 'round',
-                        'line-cap': 'round'
-                    },
-                    'paint': {
-                        'line-color': '#eab308',
-                        'line-width': 5,
-                        'line-dasharray': [2, 1.5],
-                        'line-opacity': 0.95
-                    }
+                    'id': 'route-line-jumps', 'type': 'line', 'source': 'route-jumps',
+                    'layout': { 'line-join': 'round', 'line-cap': 'round' },
+                    'paint': { 'line-color': '#eab308', 'line-width': 5, 'line-dasharray': [2, 1.5], 'line-opacity': 0.95 }
                 });
             }
 
-            // Camada de Contexto da Ignição (Azul)
             if (mapInstance.getSource('route-context')) {
                 mapInstance.getSource('route-context').setData(geojsonContext);
             } else {
-                mapInstance.addSource('route-context', {
-                    'type': 'geojson',
-                    'data': geojsonContext
-                });
+                mapInstance.addSource('route-context', { 'type': 'geojson', 'data': geojsonContext });
                 mapInstance.addLayer({
-                    'id': 'route-line-context',
-                    'type': 'line',
-                    'source': 'route-context',
-                    'layout': {
-                        'line-join': 'round',
-                        'line-cap': 'round'
-                    },
-                    'paint': {
-                        'line-color': '#3b82f6',
-                        'line-width': 3,
-                        'line-opacity': 0.75
-                    }
+                    'id': 'route-line-context', 'type': 'line', 'source': 'route-context',
+                    'layout': { 'line-join': 'round', 'line-cap': 'round' },
+                    'paint': { 'line-color': '#3b82f6', 'line-width': 3, 'line-opacity': 0.75 }
                 });
             }
 
@@ -697,23 +576,16 @@
                 zoom: zoom
             });
             mapInstance.addControl(new mapboxgl.NavigationControl());
-            mapInstance.on('load', () => {
-                plotarDados();
-            });
+            mapInstance.on('load', () => { plotarDados(); });
         } else {
             if (mapInstance.isStyleLoaded()) {
                 plotarDados();
             } else {
-                mapInstance.once('load', () => {
-                    plotarDados();
-                });
+                mapInstance.once('load', () => { plotarDados(); });
             }
         }
 
-        // Força resize após abertura do modal
-        setTimeout(() => {
-            if (mapInstance) mapInstance.resize();
-        }, 200);
+        setTimeout(() => { if (mapInstance) mapInstance.resize(); }, 200);
     }
 </script>
 {% endblock %}

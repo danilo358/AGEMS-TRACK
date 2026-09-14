@@ -104,15 +104,39 @@ class ConectividadeAudit(db.Model):
     status_decisao = db.Column(db.String(50), default="PENDENTE") # "PENDENTE", "OK", "MANUTENCAO"
     dias_analisados = db.Column(db.Integer, default=15)
 
+# Estado persistido da coleta de conectividade.  Ele não depende do relatório:
+# assim, veículos sem falha não precisam ficar armazenados para a coleta poder
+# ser interrompida e retomada exatamente do próximo veículo.
+class ConectividadeExecucao(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    status = db.Column(db.String(20), default="idle") # idle, running, paused, done, error
+    dias = db.Column(db.Integer, default=15)
+    veiculos_alvo = db.Column(db.JSON, default=list)
+    proximo_indice = db.Column(db.Integer, default=0)
+    total = db.Column(db.Integer, default=0)
+    placa_atual = db.Column(db.String(10), default="")
+    cancelar_solicitado = db.Column(db.Boolean, default=False)
+    atualizado_em = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
 
 with app.app_context():
     db.create_all()
+    # Adequa dados de versões anteriores: conectividade íntegra não é item de
+    # relatório; somente ALERTA/ERRO deve permanecer visível.
+    ConectividadeAudit.query.filter_by(status_analise="OK").delete(synchronize_session=False)
+    db.session.commit()
     try:
         from sqlalchemy import text
         db.session.execute(text("ALTER TABLE veiculo ADD COLUMN precisa_manutencao BOOLEAN DEFAULT 0"))
         db.session.commit()
     except Exception:
         db.session.rollback()
+    # Uma thread não sobrevive à reinicialização do processo. Nesse caso a
+    # execução fica disponível para retomada, sem voltar ao início.
+    execucao_em_andamento = db.session.get(ConectividadeExecucao, 1)
+    if execucao_em_andamento and execucao_em_andamento.status == "running":
+        execucao_em_andamento.status = "paused"
+        db.session.commit()
     try:
         db.session.execute(text("ALTER TABLE veiculo ADD COLUMN manutencao_manual BOOLEAN DEFAULT 0"))
         db.session.commit()
@@ -127,7 +151,7 @@ _report_status = {"status": "idle", "log": [], "error": None}
 # Estado global da auditoria de conectividade
 _conectividade_lock = threading.Lock()
 _conectividade_status = {
-    "status": "idle", # "idle", "running", "done", "error"
+    "status": "idle", # "idle", "running", "paused", "done", "error"
     "log": [],
     "progresso": 0,
     "total": 0,
@@ -136,6 +160,19 @@ _conectividade_status = {
     "placa_atual": "",
     "ultima_execucao": None
 }
+
+def atualizar_status_conectividade_execucao(execucao, mensagem=None):
+    """Espelha o ponto persistido no status usado pela tela."""
+    with _conectividade_lock:
+        _conectividade_status.update({
+            "status": execucao.status,
+            "total": execucao.total or 0,
+            "atual": execucao.proximo_indice or 0,
+            "placa_atual": execucao.placa_atual or "",
+            "progresso": int(((execucao.proximo_indice or 0) / max(execucao.total or 0, 1)) * 100),
+        })
+        if mensagem:
+            _conectividade_status["log"].append(mensagem)
 
 # Flag de homologação para testes rápidos (0 = desativado / produção)
 LIMITE_HOMOLOGACAO_CONECTIVIDADE = int(os.environ.get("LIMITE_HOMOLOGACAO_CONECTIVIDADE", "0"))
@@ -1802,6 +1839,9 @@ def executar_auditoria_conectividade_background(token_agems, token_sys, dias=15)
         data_hoje = agora_utc().date()
 
         with app.app_context():
+            execucao = db.session.get(ConectividadeExecucao, 1)
+            if not execucao:
+                raise RuntimeError("Execução de conectividade não encontrada.")
             # Mapeamento do banco mestre
             veiculos_db = {v.placa: v for v in Veiculo.query.all()}
             audits_existentes = {a.placa: a for a in VeiculoAudit.query.all()}
@@ -1838,6 +1878,12 @@ def executar_auditoria_conectividade_background(token_agems, token_sys, dias=15)
                         "empresa": empresa
                     })
 
+            # Em uma retomada usamos a lista congelada da execução anterior.
+            # Dessa forma o cursor aponta para a mesma sequência de placas.
+            if execucao.veiculos_alvo:
+                veiculos_alvo = list(execucao.veiculos_alvo)
+            else:
+                veiculos_alvo.sort(key=lambda item: item["placa"])
             total_encontrados = len(veiculos_alvo)
             log_c(f"🚗 Veículos elegíveis encontrados (OK e com rastreador): {total_encontrados}")
 
@@ -1847,12 +1893,26 @@ def executar_auditoria_conectividade_background(token_agems, token_sys, dias=15)
                 log_c(f"🧪 [Modo Homologação Ativo] Limitado a {len(veiculos_alvo)} placas para teste.")
 
             total_processar = len(veiculos_alvo)
+            if not execucao.veiculos_alvo:
+                execucao.veiculos_alvo = veiculos_alvo
+                execucao.total = total_processar
+                db.session.commit()
             with _conectividade_lock:
                 _conectividade_status["total"] = total_processar
                 _conectividade_status["atual"] = 0
 
             # 2. Processamento de cada placa com a API SystemSat
             for idx, item in enumerate(veiculos_alvo, start=1):
+                db.session.expire(execucao)
+                if execucao.cancelar_solicitado:
+                    execucao.status = "paused"
+                    execucao.placa_atual = ""
+                    db.session.commit()
+                    atualizar_status_conectividade_execucao(execucao)
+                    log_c("Auditoria cancelada. Ao retomar, continuará do próximo veículo.")
+                    return
+                if idx <= execucao.proximo_indice:
+                    continue
                 placa = item["placa"]
                 with _conectividade_lock:
                     _conectividade_status["atual"] = idx
@@ -1863,24 +1923,32 @@ def executar_auditoria_conectividade_background(token_agems, token_sys, dias=15)
                 posicoes_raw = buscar_historico_posicoes_systemsat(token_sys, placa, dias=dias)
                 resultado = analisar_posicoes_veiculo(posicoes_raw)
 
-                # Persistir / atualizar na tabela ConectividadeAudit
+                # O relatório mostra somente veículos com problema. Um veículo
+                # que voltou a ficar OK é removido do relatório imediatamente.
                 audit_con = ConectividadeAudit.query.filter_by(placa=placa).first()
-                if not audit_con:
-                    audit_con = ConectividadeAudit(placa=placa)
-                    db.session.add(audit_con)
-
-                audit_con.prefixo = item["prefixo"]
-                audit_con.empresa = item["empresa"]
-                audit_con.status_analise = resultado["status_analise"]
-                audit_con.anomalias = resultado["anomalias"]
-                audit_con.total_posicoes = resultado["total_posicoes"]
-                audit_con.qtd_violacoes_ignicao = resultado["qtd_violacoes_ignicao"]
-                audit_con.perc_saltos = resultado["perc_saltos"]
-                audit_con.posicoes_json = resultado["posicoes_limpas"]
-                audit_con.ultima_posicao_data = resultado["ultima_posicao_data"]
-                audit_con.analisado_em = agora_utc()
-                audit_con.dias_analisados = dias
+                if resultado["status_analise"] != "OK":
+                    if not audit_con:
+                        audit_con = ConectividadeAudit(placa=placa)
+                        db.session.add(audit_con)
+                    audit_con.prefixo = item["prefixo"]
+                    audit_con.empresa = item["empresa"]
+                    audit_con.status_analise = resultado["status_analise"]
+                    audit_con.anomalias = resultado["anomalias"]
+                    audit_con.total_posicoes = resultado["total_posicoes"]
+                    audit_con.qtd_violacoes_ignicao = resultado["qtd_violacoes_ignicao"]
+                    audit_con.perc_saltos = resultado["perc_saltos"]
+                    audit_con.posicoes_json = resultado["posicoes_limpas"]
+                    audit_con.ultima_posicao_data = resultado["ultima_posicao_data"]
+                    audit_con.analisado_em = agora_utc()
+                    audit_con.dias_analisados = dias
+                elif audit_con:
+                    db.session.delete(audit_con)
+                # Grava o cursor na mesma transação do veículo: uma queda ou
+                # cancelamento nunca faz a puxada voltar ao início.
+                execucao.proximo_indice = idx
+                execucao.placa_atual = ""
                 db.session.commit()
+                atualizar_status_conectividade_execucao(execucao)
 
                 if resultado["anomalias"]:
                     log_c(f"⚠️ {placa}: Anomalias detectadas -> {', '.join(resultado['anomalias'])}")
@@ -1892,9 +1960,19 @@ def executar_auditoria_conectividade_background(token_agems, token_sys, dias=15)
                 _conectividade_status["ultima_execucao"] = agora_utc().astimezone(FUSO_RELATORIO).strftime("%d/%m/%Y às %H:%M:%S (UTC-4)")
                 _conectividade_status["progresso"] = 100
 
+            execucao.status = "done"
+            execucao.cancelar_solicitado = False
+            execucao.placa_atual = ""
+            db.session.commit()
+
             log_c("🎉 Auditoria de conectividade finalizada com sucesso!")
 
     except Exception as exc:
+        with app.app_context():
+            execucao = db.session.get(ConectividadeExecucao, 1)
+            if execucao:
+                execucao.status = "error"
+                db.session.commit()
         with _conectividade_lock:
             _conectividade_status["status"] = "error"
             _conectividade_status["error"] = str(exc)
@@ -1905,6 +1983,9 @@ def conectividade():
     if "logged_in" not in session:
         return redirect(url_for("login"))
     
+    execucao_persistida = db.session.get(ConectividadeExecucao, 1)
+    if execucao_persistida and _conectividade_status["status"] != "running":
+        atualizar_status_conectividade_execucao(execucao_persistida)
     with _conectividade_lock:
         status_info = dict(_conectividade_status)
     
@@ -1937,7 +2018,37 @@ def conectividade_iniciar():
     if "logged_in" not in session:
         return jsonify({"error": "Não autenticado"}), 401
     
-    dias = int(request.form.get("dias", 15))
+    dias = max(1, min(int(request.form.get("dias", 15)), 90))
+    token_agems = session.get("token_agems")
+    token_sys = login_systemsat_conectividade()
+    if not token_agems:
+        return jsonify({"error": "Token AGEMS indisponível. Faça login novamente."}), 400
+    if not token_sys:
+        return jsonify({"error": "Não foi possível autenticar no SystemSat."}), 400
+    with _conectividade_lock:
+        if _conectividade_status["status"] == "running":
+            return jsonify({"error": "Já existe uma auditoria em andamento."}), 409
+
+    execucao = db.session.get(ConectividadeExecucao, 1)
+    if execucao and execucao.status in ("paused", "error") and execucao.proximo_indice < execucao.total:
+        dias = execucao.dias
+        mensagem = f"Auditoria retomada a partir do veículo {execucao.proximo_indice + 1}."
+    else:
+        if not execucao:
+            execucao = ConectividadeExecucao(id=1)
+            db.session.add(execucao)
+        execucao.dias = dias
+        execucao.veiculos_alvo = []
+        execucao.proximo_indice = 0
+        execucao.total = 0
+        mensagem = "Auditoria de conectividade iniciada."
+    execucao.status = "running"
+    execucao.cancelar_solicitado = False
+    execucao.placa_atual = ""
+    db.session.commit()
+    with _conectividade_lock:
+        _conectividade_status.update({"status": "running", "log": [mensagem], "progresso": int((execucao.proximo_indice / max(execucao.total, 1)) * 100), "total": execucao.total, "atual": execucao.proximo_indice, "placa_atual": "", "error": None})
+
     token_agems = session.get("token_agems")
     token_sys = login_systemsat_conectividade()
     
@@ -1952,7 +2063,20 @@ def conectividade_iniciar():
         daemon=True
     ).start()
 
-    return jsonify({"ok": True, "msg": "Auditoria de conectividade iniciada em background."})
+    return jsonify({"ok": True, "msg": mensagem})
+
+@app.route("/conectividade/cancelar", methods=["POST"])
+def conectividade_cancelar():
+    if "logged_in" not in session:
+        return jsonify({"error": "Não autenticado"}), 401
+    execucao = db.session.get(ConectividadeExecucao, 1)
+    if not execucao or execucao.status != "running":
+        return jsonify({"error": "Não há auditoria em andamento."}), 409
+    execucao.cancelar_solicitado = True
+    db.session.commit()
+    with _conectividade_lock:
+        _conectividade_status["log"].append("Cancelamento solicitado; finalizando o veículo atual.")
+    return jsonify({"ok": True, "msg": "Cancelamento solicitado."})
 
 @app.route("/conectividade/status")
 def conectividade_status():

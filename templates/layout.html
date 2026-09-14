@@ -1,64 +1,124 @@
 <!DOCTYPE html>
-<html lang="pt-br">
+<html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AGEMS Auditoria | Track Land</title>
+    <title>{% block title %}AGEMS Auditoria | Track Land{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    {% block head %}{% endblock %}
 </head>
 <body>
-    {% if session.logged_in %}
-    <div class="sidebar no-print">
-        <h2>TRACK LAND</h2>
-        <nav>
-            <a href="{{ url_for('dashboard') }}" class="nav-link {{ 'active' if request.endpoint == 'dashboard' }}">
-                <i class="fa-solid fa-gauge"></i> &nbsp; Dashboard
-            </a>
-            <a href="{{ url_for('veiculos') }}" class="nav-link {{ 'active' if request.endpoint == 'veiculos' }}">
-                <i class="fa-solid fa-bus"></i> &nbsp; Veículos
-            </a>
-            <a href="{{ url_for('roteirizacao') }}" class="nav-link {{ 'active' if request.endpoint == 'roteirizacao' }}">
-                <i class="fa-solid fa-route"></i> &nbsp; Roteirização
-            </a>
-            <a href="{{ url_for('conectividade') }}" class="nav-link {{ 'active' if request.endpoint == 'conectividade' }}">
-                <i class="fa-solid fa-satellite-dish"></i> &nbsp; Conectividade
-            </a>
-            <a href="{{ url_for('relatorio', tipo='instalacao') }}" class="nav-link {{ 'active' if tipo == 'instalacao' }}">
-                <i class="fa-solid fa-tools"></i> &nbsp; Instalação
-            </a>
-            <a href="{{ url_for('relatorio', tipo='manutencao') }}" class="nav-link {{ 'active' if tipo == 'manutencao' }}">
-                <i class="fa-solid fa-wrench"></i> &nbsp; Manutenção
-            </a>
-            <a href="{{ url_for('relatorio', tipo='desinstalacao') }}" class="nav-link {{ 'active' if tipo == 'desinstalacao' }}">
-                <i class="fa-solid fa-trash-can"></i> &nbsp; Desinstalação
-            </a>
-            <a href="{{ url_for('relatorio', tipo='duplicadas') }}" class="nav-link {{ 'active' if tipo == 'duplicadas' }}">
-                <i class="fa-solid fa-copy"></i> &nbsp; Duplicadas
-            </a>
-            <a href="{{ url_for('relatorio', tipo='inativacao_pendente') }}" class="nav-link {{ 'active' if tipo == 'inativacao_pendente' }}">
-                <i class="fa-solid fa-hourglass-half"></i> &nbsp; Inat. Pendente
-            </a>
-            <a href="{{ url_for('empresas_lista') }}" class="nav-link {{ 'active' if request.endpoint == 'empresas_lista' }}">
-                <i class="fa-solid fa-building"></i> &nbsp; Empresas
-            </a>
-            <hr style="margin: 1rem 0; border: none; border-top: 1px solid #334155;">
-            <a href="{{ url_for('logout') }}" class="nav-link" style="color: #f87171;">
-                <i class="fa-solid fa-right-from-bracket"></i> &nbsp; Sair
-            </a>
-        </nav>
-    </div>
-    {% endif %}
 
-    <div class="main-content">
-        {% block content %}{% endblock %}
+{% if session.logged_in %}
+<aside class="sidebar no-print">
+
+    <div class="sidebar-brand">
+        <div class="sidebar-brand-icon">
+            <i class="fa-solid fa-satellite-dish"></i>
+        </div>
+        <div>
+            <div class="sidebar-brand-name">TRACK LAND</div>
+            <div class="sidebar-brand-sub">AGEMS · Auditoria</div>
+        </div>
     </div>
 
-    <script>
-        function printReport() {
-            window.print();
-        }
-    </script>
+    <nav class="sidebar-nav">
+        <div class="nav-group">
+            <div class="nav-group-title">Operações</div>
+            <div class="nav-links">
+                <a href="{{ url_for('dashboard') }}" class="nav-link {{ 'active' if request.endpoint == 'dashboard' else '' }}">
+                    <i class="fa-solid fa-chart-pie"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a href="{{ url_for('veiculos') }}" class="nav-link {{ 'active' if request.endpoint == 'veiculos' else '' }}">
+                    <i class="fa-solid fa-bus-simple"></i>
+                    <span>Frota de Veículos</span>
+                </a>
+                <a href="{{ url_for('roteirizacao') }}" class="nav-link {{ 'active' if request.endpoint == 'roteirizacao' else '' }}">
+                    <i class="fa-solid fa-route"></i>
+                    <span>Roteirização</span>
+                </a>
+                <a href="{{ url_for('conectividade') }}" class="nav-link {{ 'active' if request.endpoint == 'conectividade' else '' }}">
+                    <i class="fa-solid fa-tower-broadcast"></i>
+                    <span>Auditoria Conectividade</span>
+                </a>
+            </div>
+        </div>
+
+        <div class="nav-group">
+            <div class="nav-group-title">Relatórios</div>
+            <div class="nav-links">
+                <a href="{{ url_for('relatorio', tipo='instalacao') }}" class="nav-link {{ 'active' if tipo is defined and tipo == 'instalacao' else '' }}">
+                    <i class="fa-solid fa-screwdriver-wrench"></i>
+                    <span>Instalação</span>
+                </a>
+                <a href="{{ url_for('relatorio', tipo='manutencao') }}" class="nav-link {{ 'active' if tipo is defined and tipo == 'manutencao' else '' }}">
+                    <i class="fa-solid fa-wrench"></i>
+                    <span>Manutenção</span>
+                </a>
+                <a href="{{ url_for('relatorio', tipo='desinstalacao') }}" class="nav-link {{ 'active' if tipo is defined and tipo == 'desinstalacao' else '' }}">
+                    <i class="fa-solid fa-circle-xmark"></i>
+                    <span>Desinstalação</span>
+                </a>
+                <a href="{{ url_for('relatorio', tipo='duplicadas') }}" class="nav-link {{ 'active' if tipo is defined and tipo == 'duplicadas' else '' }}">
+                    <i class="fa-solid fa-clone"></i>
+                    <span>Placas Duplicadas</span>
+                </a>
+                <a href="{{ url_for('relatorio', tipo='inativacao_pendente') }}" class="nav-link {{ 'active' if tipo is defined and tipo == 'inativacao_pendente' else '' }}">
+                    <i class="fa-solid fa-clock-rotate-left"></i>
+                    <span>Inativação Pendente</span>
+                </a>
+            </div>
+        </div>
+
+        <div class="nav-group">
+            <div class="nav-group-title">Gestão</div>
+            <div class="nav-links">
+                <a href="{{ url_for('empresas_lista') }}" class="nav-link {{ 'active' if request.endpoint == 'empresas_lista' else '' }}">
+                    <i class="fa-solid fa-building-user"></i>
+                    <span>Empresas &amp; Contatos</span>
+                </a>
+                <a href="{{ url_for('whatsapp') }}" class="nav-link {{ 'active' if request.endpoint == 'whatsapp' else '' }}">
+                    <i class="fa-brands fa-whatsapp"></i>
+                    <span>Notificações WhatsApp</span>
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="sidebar-footer">
+        <div class="user-badge">
+            <div class="user-avatar">
+                <i class="fa-solid fa-user"></i>
+            </div>
+            <div style="flex:1;min-width:0;">
+                <div class="user-name" title="{{ session.get('user', 'Administrador') }}">
+                    {{ session.get('user', 'Administrador') }}
+                </div>
+                <div class="user-status">Sessão ativa</div>
+            </div>
+        </div>
+        <a href="{{ url_for('logout') }}" class="nav-link nav-link-logout">
+            <i class="fa-solid fa-arrow-right-from-bracket"></i>
+            <span>Sair do Sistema</span>
+        </a>
+    </div>
+
+</aside>
+{% endif %}
+
+<main class="main-content">
+    {% block content %}{% endblock %}
+</main>
+
+<script>
+    function printReport() { window.print(); }
+</script>
+{% block scripts %}{% endblock %}
+
 </body>
 </html>

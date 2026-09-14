@@ -1,131 +1,129 @@
 {% extends "layout.html" %}
 
 {% block content %}
-<div class="dashboard-header">
-    <h1><i class="fa-solid fa-route"></i> Roteirização e Integração SystemSat</h1>
-    <p style="color: #94a3b8; font-size: 0.9rem;">Gere ou importe rotas e envie para a GlobalBus.</p>
+<div class="page-header">
+    <div class="page-header-left">
+        <h1><i class="fa-solid fa-route"></i> Roteirização e Integração</h1>
+        <p class="page-subtitle">Gere ou importe rotas e envie para a GlobalBus via SystemSat</p>
+    </div>
 </div>
 
-<div class="stats-container" style="display: block; background: #1e293b; padding: 20px; border-radius: 8px;">
-
-    <div class="tabs" style="margin-bottom: 20px; border-bottom: 1px solid #334155;">
-        <button class="tab-btn active" onclick="switchTab('monitora')" id="btn-monitora"
-            style="background: none; border: none; color: #fff; padding: 10px 20px; cursor: pointer; border-bottom: 2px solid #3b82f6; font-size: 1rem;">Gerar
-            via Monitora</button>
-        <button class="tab-btn" onclick="switchTab('kml')" id="btn-kml"
-            style="background: none; border: none; color: #94a3b8; padding: 10px 20px; cursor: pointer; font-size: 1rem;">Importar
-            KML</button>
+<div class="card">
+    <!-- Abas -->
+    <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('monitora')" id="btn-monitora">
+            <i class="fa-solid fa-satellite-dish"></i> Gerar via Monitora
+        </button>
+        <button class="tab-btn" onclick="switchTab('kml')" id="btn-kml">
+            <i class="fa-solid fa-file-import"></i> Importar KML
+        </button>
     </div>
 
-    <!-- ABA MONITORA -->
-    <div id="tab-monitora" class="tab-content" style="display: block;">
-        <form id="form-monitora" style="display: flex; flex-direction: column; gap: 15px;">
-            <div style="display: flex; gap: 15px; flex-wrap: wrap;">
-                <div style="flex: 1; min-width: 250px;">
-                    <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Pasta</label>
-                    <select id="select-pasta" class="search-input" style="width: 100%;" required>
+    <!-- ABA: Monitora -->
+    <div id="tab-monitora" class="tab-content" style="display:block;">
+        <form id="form-monitora" style="display:flex;flex-direction:column;gap:1.1rem;">
+            <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+                <div style="flex:1;min-width:240px;">
+                    <label>Pasta</label>
+                    <select id="select-pasta" class="search-input" required>
                         <option value="">Carregando pastas...</option>
                     </select>
                 </div>
-                <div style="flex: 1; min-width: 250px;">
-                    <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Linha</label>
-                    <select id="select-linha" class="search-input" style="width: 100%;" disabled required>
+                <div style="flex:1;min-width:240px;">
+                    <label>Linha</label>
+                    <select id="select-linha" class="search-input" disabled required>
                         <option value="">Selecione a Pasta primeiro</option>
                     </select>
                 </div>
-                <div style="flex: 1; min-width: 150px;">
-                    <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Sentido</label>
-                    <select id="select-sentido" class="search-input" style="width: 100%;" required>
+                <div style="flex:0 0 160px;min-width:140px;">
+                    <label>Sentido</label>
+                    <select id="select-sentido" class="search-input" required>
                         <option value="IDA">IDA</option>
                         <option value="VOLTA">VOLTA</option>
                     </select>
                 </div>
             </div>
 
-            <div>
-                <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Distância entre Pontos Interpolados
-                    (Metros)</label>
-                <input type="number" id="distancia-monitora" class="search-input" style="width: 200px;" value="200"
-                    min="50" required>
+            <div style="max-width:220px;">
+                <label>Distância entre pontos interpolados (metros)</label>
+                <input type="number" id="distancia-monitora" class="search-input" style="width:100%;" value="200" min="50" required>
             </div>
 
-            <button type="submit" class="generate-btn" style="width: max-content; padding: 10px 20px;"><i
-                    class="fa-solid fa-play"></i> Gerar e Enviar Rota</button>
+            <div>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fa-solid fa-play"></i> Gerar e Enviar Rota
+                </button>
+            </div>
         </form>
     </div>
 
-    <!-- ABA KML -->
-    <div id="tab-kml" class="tab-content" style="display: none;">
-        <form id="form-kml" style="display: flex; flex-direction: column; gap: 15px;">
+    <!-- ABA: KML -->
+    <div id="tab-kml" class="tab-content" style="display:none;">
+        <form id="form-kml" style="display:flex;flex-direction:column;gap:1.1rem;">
             <div>
-                <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Arquivo KML</label>
-                <input type="file" id="arquivo-kml" accept=".kml" class="search-input" style="width: 100%;" required>
+                <label>Arquivo KML</label>
+                <input type="file" id="arquivo-kml" accept=".kml" class="search-input" required>
             </div>
 
-            <div style="display: flex; gap: 15px; flex-wrap: wrap;">
-                <div style="flex: 1; min-width: 200px;">
-                    <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Nome da Rota (RouteName)</label>
-                    <input type="text" id="kml-nome" class="search-input" style="width: 100%;"
-                        placeholder="Ex: PARANHOS - AMAMBAI" required>
+            <div style="display:flex;gap:1rem;flex-wrap:wrap;">
+                <div style="flex:1;min-width:200px;">
+                    <label>Nome da Rota (RouteName)</label>
+                    <input type="text" id="kml-nome" class="search-input" placeholder="Ex: PARANHOS - AMAMBAI" required>
                 </div>
-                <div style="flex: 1; min-width: 200px;">
-                    <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Empresa Origem
-                        (ClientBusIntegrationCode)</label>
-                    <input type="text" id="kml-empresa" class="search-input" style="width: 100%;"
-                        placeholder="ID Integração Empresa" required>
+                <div style="flex:1;min-width:200px;">
+                    <label>Empresa Origem (ClientBusIntegrationCode)</label>
+                    <input type="text" id="kml-empresa" class="search-input" placeholder="ID de integração da empresa" required>
                 </div>
-                <div style="flex: 1; min-width: 150px;">
-                    <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Direction (IdDirection)</label>
-                    <select id="kml-direction" class="search-input" style="width: 100%;" required>
+                <div style="flex:0 0 160px;min-width:140px;">
+                    <label>Direction (IdDirection)</label>
+                    <select id="kml-direction" class="search-input" required>
                         <option value="1">IDA (1)</option>
                         <option value="2">VOLTA (2)</option>
                     </select>
                 </div>
             </div>
 
-            <div>
-                <label style="display: block; color: #cbd5e1; margin-bottom: 5px;">Distância entre Pontos Interpolados
-                    (Metros)</label>
-                <input type="number" id="distancia-kml" class="search-input" style="width: 200px;" value="50" min="10"
-                    required>
+            <div style="max-width:220px;">
+                <label>Distância entre pontos interpolados (metros)</label>
+                <input type="number" id="distancia-kml" class="search-input" style="width:100%;" value="50" min="10" required>
             </div>
 
-            <button type="submit" class="generate-btn" style="width: max-content; padding: 10px 20px;"><i
-                    class="fa-solid fa-upload"></i> Importar e Enviar KML</button>
+            <div>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fa-solid fa-upload"></i> Importar e Enviar KML
+                </button>
+            </div>
         </form>
     </div>
 
-    <!-- LOG STATUS -->
-    <div id="status-container" style="margin-top: 30px; display: none;">
-        <h3 style="color: #fff; margin-bottom: 10px;"><i class="fa-solid fa-terminal"></i> Status</h3>
-        <div id="status-log"
-            style="background: #0f172a; padding: 15px; border-radius: 5px; height: 200px; overflow-y: auto; font-family: monospace; color: #34d399; font-size: 0.9rem;">
-        </div>
+    <!-- Log de Status -->
+    <div id="status-container" style="margin-top:1.5rem;display:none;">
+        <h4 style="margin-bottom:0.6rem;display:flex;align-items:center;gap:0.4rem;color:#374151;">
+            <i class="fa-solid fa-terminal" style="color:#6b7280;"></i> Log de Execução
+        </h4>
+        <div id="status-log" class="terminal-window" style="height:200px;color:#34d399;"></div>
     </div>
-
 </div>
+{% endblock %}
 
+{% block scripts %}
 <script>
     function switchTab(tab) {
         document.getElementById('tab-monitora').style.display = tab === 'monitora' ? 'block' : 'none';
-        document.getElementById('tab-kml').style.display = tab === 'kml' ? 'block' : 'none';
-
-        document.getElementById('btn-monitora').style.color = tab === 'monitora' ? '#fff' : '#94a3b8';
-        document.getElementById('btn-monitora').style.borderBottom = tab === 'monitora' ? '2px solid #3b82f6' : 'none';
-
-        document.getElementById('btn-kml').style.color = tab === 'kml' ? '#fff' : '#94a3b8';
-        document.getElementById('btn-kml').style.borderBottom = tab === 'kml' ? '2px solid #3b82f6' : 'none';
+        document.getElementById('tab-kml').style.display      = tab === 'kml'      ? 'block' : 'none';
+        document.getElementById('btn-monitora').classList.toggle('active', tab === 'monitora');
+        document.getElementById('btn-kml').classList.toggle('active', tab === 'kml');
     }
 
     function addLog(msg, isError = false) {
         const logBox = document.getElementById('status-log');
         document.getElementById('status-container').style.display = 'block';
         const color = isError ? '#ef4444' : '#34d399';
-        logBox.innerHTML += `<div style="color: ${color};">> ${msg}</div>`;
+        logBox.innerHTML += `<div style="color:${color};">&gt; ${msg}</div>`;
         logBox.scrollTop = logBox.scrollHeight;
     }
 
-    // Carregar pastas
+    // Carregar pastas ao iniciar
     window.onload = function () {
         fetch('{{ url_for("api_pastas") }}')
             .then(r => r.json())
@@ -134,7 +132,6 @@
                 sel.innerHTML = '<option value="">Selecione a Pasta</option>';
                 data.forEach(p => {
                     const empresaNome = p.empresa ? (p.empresa.nomeFantasia || p.empresa.razaoSocial) : 'Desconhecida';
-                    // Salvar o nome da empresa como dataset para usar no Global
                     sel.innerHTML += `<option value="${p.id}" data-empresa="${empresaNome}">${p.numero} - ${empresaNome}</option>`;
                 });
             }).catch(e => {
@@ -143,7 +140,7 @@
             });
     }
 
-    // Ao selecionar pasta, carregar linhas da pasta
+    // Carregar linhas ao selecionar pasta
     document.getElementById('select-pasta').addEventListener('change', function () {
         const pastaId = this.value;
         const selLinha = document.getElementById('select-linha');
@@ -162,16 +159,16 @@
                 selLinha.innerHTML = '<option value="">Selecione a Linha</option>';
                 if (!data || data.length === 0) {
                     selLinha.innerHTML = '<option value="">Nenhuma linha encontrada nesta pasta</option>';
-                    addLog('⚠️ Nenhuma linha encontrada para esta pasta. Verifique no Monitora se existem linhas cadastradas.', true);
+                    addLog('Nenhuma linha encontrada para esta pasta. Verifique no Monitora.', true);
                 } else {
-                    addLog(`✅ ${data.length} linha(s) encontrada(s) na pasta.`);
+                    addLog(`${data.length} linha(s) encontrada(s) na pasta.`);
                     data.forEach(l => {
                         selLinha.innerHTML += `<option value="${l.id}">${l.numero || 'S/N'} - ${l.nome}</option>`;
                     });
                 }
             }).catch(e => {
                 selLinha.innerHTML = '<option value="">Erro ao carregar linhas</option>';
-                addLog('❌ Erro ao carregar linhas: ' + e.message, true);
+                addLog('Erro ao carregar linhas: ' + e.message, true);
             });
     });
 
@@ -189,7 +186,6 @@
         addLog('Iniciando integração de rota via Monitora...');
         addLog('Aguarde, este processo pode levar alguns minutos...');
 
-        // Timeout de 5 minutos para não cancelar a requisição prematuramente
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 300000);
 
@@ -207,15 +203,13 @@
         }).then(r => r.json()).then(data => {
             clearTimeout(timeoutId);
             if (data.error) addLog('Erro: ' + data.error, true);
-            else {
-                addLog('SUCESSO! ' + (data.msg || 'Rota gerada e enviada com sucesso.'));
-            }
+            else addLog('SUCESSO! ' + (data.msg || 'Rota gerada e enviada com sucesso.'));
         }).catch(err => {
             clearTimeout(timeoutId);
             if (err.name === 'AbortError') {
-                addLog('Erro: A requisição excedeu o tempo limite de 5 minutos. Verifique o terminal do servidor para mais detalhes.', true);
+                addLog('Erro: A requisicao excedeu o limite de 5 minutos. Verifique o terminal do servidor.', true);
             } else {
-                addLog('Erro de conexão: ' + err.message + '. Verifique se o servidor Flask está rodando.', true);
+                addLog('Erro de conexao: ' + err.message, true);
             }
         }).finally(() => {
             btn.disabled = false;
@@ -246,9 +240,7 @@
             body: formData
         }).then(r => r.json()).then(data => {
             if (data.error) addLog('Erro: ' + data.error, true);
-            else {
-                addLog('SUCESSO! ' + (data.msg || 'Rota do KML enviada com sucesso.'));
-            }
+            else addLog('SUCESSO! ' + (data.msg || 'Rota do KML enviada com sucesso.'));
         }).catch(err => {
             addLog('Erro interno: ' + err, true);
         }).finally(() => {

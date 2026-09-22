@@ -71,7 +71,7 @@
     </div>
 
     <!-- Progresso e Log -->
-    <div id="boxStatusConectividade" style="margin-top:1.25rem;display:{{ 'block' if status_info.status in ('running', 'paused', 'error') else 'none' }};">
+    <div id="boxStatusConectividade" class="status-box {{ 'is-visible' if status_info.status in ('running', 'paused', 'error') else '' }}" data-status-inicial="{{ status_info.status }}" data-mapbox-token="{{ mapbox_token }}">
         <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.85rem;margin-bottom:0.45rem;">
             <span id="lblStatusWorker" style="font-weight:600;color:#1a56db;">Processando veículos...</span>
             <span id="lblProgressoPerc" style="font-weight:700;color:#374151;">0%</span>
@@ -163,13 +163,13 @@
 
                     <td style="text-align:center;" class="no-print">
                         <div style="display:flex;gap:0.35rem;justify-content:center;flex-wrap:wrap;">
-                            <button onclick="abrirModalMapa('{{ r.placa }}')" class="btn-action btn-action-map" title="Visualizar trajeto no mapa">
+                            <button data-acao-conectividade="mapa" data-placa="{{ r.placa }}" class="btn-action btn-action-map" title="Visualizar trajeto no mapa">
                                 <i class="fa-solid fa-map-location-dot"></i> Mapa
                             </button>
-                            <button onclick="julgarVeiculo('{{ r.placa }}', 'OK')" class="btn-action btn-action-ok" title="Validar como OK">
+                            <button data-acao-conectividade="julgar" data-placa="{{ r.placa }}" data-decisao="OK" class="btn-action btn-action-ok" title="Validar como OK">
                                 <i class="fa-solid fa-thumbs-up"></i> OK
                             </button>
-                            <button onclick="julgarVeiculo('{{ r.placa }}', 'NAO_OK')" class="btn-action btn-action-danger" title="Enviar para manutenção">
+                            <button data-acao-conectividade="julgar" data-placa="{{ r.placa }}" data-decisao="NAO_OK" class="btn-action btn-action-danger" title="Enviar para manutenção">
                                 <i class="fa-solid fa-wrench"></i> Não OK
                             </button>
                         </div>
@@ -219,12 +219,26 @@
 
 {% block scripts %}
 <script>
-    mapboxgl.accessToken = '{{ mapbox_token }}';
+    const mapboxToken = document.getElementById('boxStatusConectividade').dataset.mapboxToken || '';
+    const mapboxDisponivel = typeof window.mapboxgl !== 'undefined' && Boolean(mapboxToken);
+    if (mapboxDisponivel) {
+        mapboxgl.accessToken = mapboxToken;
+    }
     let mapInstance = null;
     let mapMarkers = [];
 
+    async function lerResposta(res) {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            throw new Error(data.error || `Erro HTTP ${res.status}`);
+        }
+        return data;
+    }
+
     function iniciarAuditoriaConectividade() {
-        const dias = document.getElementById('inpDias').value || 15;
+        const campoDias = document.getElementById('inpDias');
+        const dias = Math.max(1, Math.min(90, Number(campoDias.value) || 15));
+        campoDias.value = dias;
         const btn = document.getElementById('btnIniciar');
         btn.disabled = true;
 
@@ -238,9 +252,10 @@
             method: 'POST',
             body: formData
         })
-        .then(res => res.json())
+        .then(lerResposta)
         .then(data => {
             if (data.ok) {
+                document.getElementById('btnCancelar').disabled = false;
                 monitorarStatusConectividade();
             } else {
                 alert('Erro ao iniciar: ' + (data.error || 'Erro desconhecido'));
@@ -248,7 +263,7 @@
             }
         })
         .catch(err => {
-            alert('Erro de conexão ao iniciar auditoria.');
+            alert(err.message || 'Erro de conexão ao iniciar auditoria.');
             btn.disabled = false;
         });
     }
@@ -257,22 +272,22 @@
         const btn = document.getElementById('btnCancelar');
         btn.disabled = true;
         fetch('/conectividade/cancelar', { method: 'POST' })
-            .then(res => res.json())
+            .then(lerResposta)
             .then(data => {
                 if (!data.ok) {
                     alert(data.error || 'Não foi possível cancelar a auditoria.');
                     btn.disabled = false;
                 }
             })
-            .catch(() => {
-                alert('Erro de conexão ao solicitar cancelamento.');
+            .catch(err => {
+                alert(err.message || 'Erro de conexão ao solicitar cancelamento.');
                 btn.disabled = false;
             });
     }
 
     function monitorarStatusConectividade() {
         fetch('/conectividade/status')
-        .then(res => res.json())
+        .then(lerResposta)
         .then(data => {
             const logConsole = document.getElementById('logConsoleConectividade');
             if (data.log && data.log.length > 0) {
@@ -298,16 +313,24 @@
                 document.getElementById('lblStatusWorker').innerText = 'Auditoria concluída com sucesso!';
                 setTimeout(() => { window.location.reload(); }, 1200);
             } else if (data.status === 'error') {
-                alert('Erro na auditoria: ' + data.error);
+                alert('Erro na auditoria: ' + (data.error || 'Erro desconhecido.'));
                 document.getElementById('btnIniciar').disabled = false;
+                document.getElementById('btnCancelar').disabled = true;
             }
         })
-        .catch(() => { setTimeout(monitorarStatusConectividade, 3000); });
+        .catch(err => {
+            document.getElementById('lblStatusWorker').innerText = err.message || 'Não foi possível consultar o status.';
+            setTimeout(monitorarStatusConectividade, 3000);
+        });
     }
 
-    {% if status_info.status in ('running', 'paused', 'error') %}
+    const statusInicial = document.getElementById('boxStatusConectividade').dataset.statusInicial;
+    if (statusInicial === 'running') {
         monitorarStatusConectividade();
-    {% endif %}
+    } else if (statusInicial === 'error') {
+        document.getElementById('lblStatusWorker').innerText =
+            'A última auditoria encontrou um erro. Clique em Retomar análise para tentar novamente.';
+    }
 
     function julgarVeiculo(placa, acao) {
         const msgConfirm = acao === 'NAO_OK'
@@ -324,7 +347,7 @@
             method: 'POST',
             body: formData
         })
-        .then(res => res.json())
+        .then(lerResposta)
         .then(data => {
             if (data.ok) {
                 alert(data.msg);
@@ -336,22 +359,29 @@
                 alert('Erro ao processar ação: ' + (data.error || 'Erro desconhecido'));
             }
         })
-        .catch(err => { alert('Erro de comunicação com o servidor.'); });
+        .catch(err => { alert(err.message || 'Erro de comunicação com o servidor.'); });
     }
 
     function abrirModalMapa(placa) {
+        if (!mapboxDisponivel) {
+            alert('Mapa indisponível: configure o MAPBOX_TOKEN e verifique sua conexão.');
+            return;
+        }
         document.getElementById('modalPlacaTitulo').innerHTML = `<i class="fa-solid fa-map"></i> Inspeção Visual: Placa <strong>${placa}</strong>`;
         document.getElementById('modalPlacaSub').innerText = 'Carregando telemetria e coordenadas...';
         document.getElementById('modalMapa').style.display = 'flex';
 
         fetch(`/conectividade/posicoes/${placa}`)
-        .then(res => res.json())
+        .then(lerResposta)
         .then(data => {
             const posicoes = data.posicoes || [];
             document.getElementById('modalPlacaSub').innerText = `${data.empresa} | Total de ${posicoes.length} posições no período | Diagnóstico: ${data.status_analise}`;
             renderizarMapa(posicoes);
         })
-        .catch(err => { alert('Erro ao carregar dados de posição para a placa.'); });
+        .catch(err => {
+            fecharModalMapa();
+            alert(err.message || 'Erro ao carregar dados de posição para a placa.');
+        });
     }
 
     function fecharModalMapa() {
@@ -587,5 +617,16 @@
 
         setTimeout(() => { if (mapInstance) mapInstance.resize(); }, 200);
     }
+
+    document.querySelectorAll('[data-acao-conectividade]').forEach(button => {
+        button.addEventListener('click', () => {
+            const placa = button.dataset.placa;
+            if (button.dataset.acaoConectividade === 'mapa') {
+                abrirModalMapa(placa);
+            } else {
+                julgarVeiculo(placa, button.dataset.decisao);
+            }
+        });
+    });
 </script>
 {% endblock %}

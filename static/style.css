@@ -778,6 +778,9 @@ textarea { resize: vertical; }
     border-radius: var(--r-full);
 }
 
+.status-box { display: none; margin-top: 1.25rem; }
+.status-box.is-visible { display: block; }
+
 /* ── Status Info ─────────────────────────────────────────────────────────── */
 .status-pill {
     display: inline-flex;

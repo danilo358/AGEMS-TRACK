@@ -2045,17 +2045,26 @@ def conectividade():
 def conectividade_iniciar():
     if "logged_in" not in session:
         return jsonify({"error": "Não autenticado"}), 401
-    
-    dias = max(1, min(int(request.form.get("dias", 15)), 90))
+
+    try:
+        dias = max(1, min(int(request.form.get("dias", 15)), 90))
+    except (TypeError, ValueError):
+        return jsonify({"error": "O período deve ser um número entre 1 e 90 dias."}), 400
+
     token_agems = session.get("token_agems")
-    token_sys = login_systemsat_conectividade()
     if not token_agems:
         return jsonify({"error": "Token AGEMS indisponível. Faça login novamente."}), 400
-    if not token_sys:
-        return jsonify({"error": "Não foi possível autenticar no SystemSat."}), 400
+
     with _conectividade_lock:
         if _conectividade_status["status"] == "running":
             return jsonify({"error": "Já existe uma auditoria em andamento."}), 409
+
+    try:
+        token_sys = login_systemsat_conectividade()
+    except ( requests.RequestException, RuntimeError, ValueError) as exc:
+        return jsonify({"error": f"Não foi possível autenticar no SystemSat: {exc}"}), 502
+    if not token_sys:
+        return jsonify({"error": "Não foi possível autenticar no SystemSat."}), 400
 
     execucao = db.session.get(ConectividadeExecucao, 1)
     if execucao and execucao.status in ("paused", "error") and execucao.proximo_indice < execucao.total:
@@ -2076,14 +2085,6 @@ def conectividade_iniciar():
     db.session.commit()
     with _conectividade_lock:
         _conectividade_status.update({"status": "running", "log": [mensagem], "progresso": int((execucao.proximo_indice / max(execucao.total, 1)) * 100), "total": execucao.total, "atual": execucao.proximo_indice, "placa_atual": "", "error": None})
-
-    token_agems = session.get("token_agems")
-    token_sys = login_systemsat_conectividade()
-    
-    if not token_agems:
-        return jsonify({"error": "Token da AGEMS não encontrado. Faça login novamente."}), 400
-    if not token_sys:
-        return jsonify({"error": "Não foi possível autenticar no SystemSat."}), 400
 
     threading.Thread(
         target=executar_auditoria_conectividade_background,
@@ -2137,8 +2138,13 @@ def conectividade_acao():
     
     placa = request.form.get("placa")
     acao = request.form.get("acao") # "OK" ou "NAO_OK"
-    
+
     placa_limpa = limpar_placa(placa)
+    if not placa_limpa:
+        return jsonify({"error": "Placa não informada."}), 400
+    if acao not in ("OK", "NAO_OK"):
+        return jsonify({"error": "Ação inválida."}), 400
+
     audit = ConectividadeAudit.query.filter_by(placa=placa_limpa).first()
     v_mestre = Veiculo.query.filter_by(placa=placa_limpa).first()
     

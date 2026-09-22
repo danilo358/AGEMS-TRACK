@@ -4,6 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}AGEMS Auditoria | Track Land{% endblock %}</title>
+    <script>
+        (function () {
+            var savedTheme = localStorage.getItem('agems-theme');
+            var theme = savedTheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.dataset.theme = theme;
+        }());
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -45,6 +52,10 @@
                 <a href="{{ url_for('conectividade') }}" class="nav-link {{ 'active' if request.endpoint == 'conectividade' else '' }}">
                     <i class="fa-solid fa-tower-broadcast"></i>
                     <span>Auditoria Conectividade</span>
+                </a>
+                <a href="{{ url_for('analise_grade') }}" class="nav-link {{ 'active' if request.endpoint == 'analise_grade' else '' }}">
+                    <i class="fa-solid fa-clock-rotate-left"></i>
+                    <span>Análise de Grade</span>
                 </a>
             </div>
         </div>
@@ -112,11 +123,42 @@
 {% endif %}
 
 <main class="main-content">
+    {% if session.logged_in %}
+    <div class="app-toolbar no-print">
+        <span class="app-toolbar-label">Painel de auditoria</span>
+        <button id="themeToggle" class="theme-toggle" type="button" aria-label="Ativar modo escuro" aria-pressed="false">
+            <i class="fa-solid fa-moon" aria-hidden="true"></i>
+            <span>Modo escuro</span>
+        </button>
+    </div>
+    {% endif %}
     {% block content %}{% endblock %}
 </main>
 
 <script>
     function printReport() { window.print(); }
+
+    (function () {
+        var toggle = document.getElementById('themeToggle');
+        if (!toggle) return;
+
+        function updateThemeButton() {
+            var isDark = document.documentElement.dataset.theme === 'dark';
+            toggle.setAttribute('aria-pressed', String(isDark));
+            toggle.setAttribute('aria-label', isDark ? 'Ativar modo claro' : 'Ativar modo escuro');
+            toggle.querySelector('i').className = isDark ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+            toggle.querySelector('span').textContent = isDark ? 'Modo claro' : 'Modo escuro';
+        }
+
+        toggle.addEventListener('click', function () {
+            var nextTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+            document.documentElement.dataset.theme = nextTheme;
+            localStorage.setItem('agems-theme', nextTheme);
+            updateThemeButton();
+        });
+
+        updateThemeButton();
+    }());
 </script>
 {% block scripts %}{% endblock %}
 

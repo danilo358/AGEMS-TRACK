@@ -1,8 +1,9 @@
 import requests
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, date
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify, make_response
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify, make_response, send_file
 import io
 import pandas as pd
 import itertools
@@ -19,6 +20,7 @@ from zoneinfo import ZoneInfo
 # CONFIGURAÇÃO FLASK & BANCO DE DADOS
 # =========================================================
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import func
 
 def carregar_env_local():
     env_path = Path(__file__).with_name(".env")
@@ -44,6 +46,10 @@ elif database_url.startswith("postgresql://") and "+psycopg" not in database_url
     database_url = database_url.replace("postgresql://", "postgresql+psycopg://", 1)
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 900,
+}
 
 db = SQLAlchemy(app)
 
@@ -176,6 +182,18 @@ def atualizar_status_conectividade_execucao(execucao, mensagem=None):
 
 # Flag de homologação para testes rápidos (0 = desativado / produção)
 LIMITE_HOMOLOGACAO_CONECTIVIDADE = int(os.environ.get("LIMITE_HOMOLOGACAO_CONECTIVIDADE", "0"))
+ANALISE_GRADE_WORKERS = max(
+    1, int(os.environ.get("ANALISE_GRADE_WORKERS", "10"))
+)
+ANALISE_GRADE_TIMEOUT = max(
+    15, int(os.environ.get("ANALISE_GRADE_TIMEOUT", "240"))
+)
+ANALISE_GRADE_TENTATIVAS_TIMEOUT = max(
+    1, int(os.environ.get("ANALISE_GRADE_TENTATIVAS_TIMEOUT", "2"))
+)
+ANALISE_GRADE_JANELA_MINUTOS = max(
+    5, int(os.environ.get("ANALISE_GRADE_JANELA_MINUTOS", "15"))
+)
 
 # =========================================================
 # FUNÇÕES DE UTILIDADE E LOGIN
@@ -292,6 +310,7 @@ def login_systemsat():
 # FUNÇÕES DE EXTRAÇÃO DE DADOS
 # =========================================================
 def buscar_todos_veiculos(token):
+    token_agems = token
     url_vistoria = "https://www.monitora.ms.gov.br/vistoria/"
     headers = {
         "content-type": "application/json",
@@ -300,6 +319,7 @@ def buscar_todos_veiculos(token):
         "referer": "https://www.monitora.ms.gov.br/",
         "origin": "https://www.monitora.ms.gov.br"
     }
+    headers["authorization"] = f"Bearer {token_agems}"
     payload = {
         "operationName": "BuscarRelatorioVeiculos",
         "variables": {"page": 1, "paginate": False, "nome": "%%", "placa": "%%", "status": ""},
@@ -532,11 +552,13 @@ def rastreador_esta_vinculado_ssx(posicao):
 
 
 def buscar_posicoes_rastreadores(token_systemsat):
+    token = token_systemsat
     url = "https://integration.systemsatx.com.br/Controlws/LastPosition/GetLastPositions"
     headers = {
         "Authorization": f"Bearer {token_systemsat}", "Content-Type": "application/json",
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
+    headers["Authorization"] = f"Bearer {token}"
     resposta_http = requests.post(url, json={"ClientIntegrationCode": "55"}, headers=headers, timeout=30)
     resposta_http.raise_for_status()
     res = resposta_http.json()
@@ -619,7 +641,9 @@ def interpolar_rota(coordenadas_lon_lat, distancia_m=50):
     return interpolados
 
 def buscar_pastas_linha(token):
+    token_agems = token
     headers = {"content-type": "application/json", "authorization": f"Bearer {token}", "user-agent": "Mozilla/5.0"}
+    headers["authorization"] = f"Bearer {token_agems}"
     payload = {
         "operationName": "BuscarPastas_Linha", "variables": {"filtros": {}, "page": 1},
         "query": "query BuscarPastas_Linha($filtros: FiltroBuscarPastasInput, $page: Float) { buscarPastas(filtros: $filtros, pageOptionsDto: {paginate: true, page: $page, take: 50}) { data { id numero descricao empresa { nomeFantasia razaoSocial } } } }"
@@ -628,7 +652,9 @@ def buscar_pastas_linha(token):
     return res.get("data", {}).get("buscarPastas", {}).get("data", [])
 
 def buscar_todos_pontos_monitora(token):
+    token_agems = token
     headers = {"content-type": "application/json", "authorization": f"Bearer {token}", "user-agent": "Mozilla/5.0"}
+    headers["authorization"] = f"Bearer {token_agems}"
     all_points = []
     has_next = True
     cursor = None
@@ -654,7 +680,9 @@ def buscar_todos_pontos_monitora(token):
     return dict_pontos
 
 def buscar_linha_trajeto(token, linha_id):
+    token_agems = token
     headers = {"content-type": "application/json", "authorization": f"Bearer {token}", "user-agent": "Mozilla/5.0"}
+    headers["authorization"] = f"Bearer {token_agems}"
     payload = {
         "operationName": "GET_LINHA", "variables": {"id": linha_id},
         "query": "query GET_LINHA($id: ID!) { linha(id: $id) { id nome numero sentidos { sentido trajetos(sorting: {field: ordem, direction: ASC}) { seccionamento { pontoInicial { nome } pontoFinal { nome } } } } } }"
@@ -2114,6 +2142,7 @@ def conectividade_acao():
     audit = ConectividadeAudit.query.filter_by(placa=placa_limpa).first()
     v_mestre = Veiculo.query.filter_by(placa=placa_limpa).first()
     
+
     if not v_mestre:
         v_mestre = Veiculo(placa=placa_limpa)
         db.session.add(v_mestre)
@@ -2158,6 +2187,703 @@ def conectividade_acao():
         db.session.commit()
         recriar_cache_relatorio()
         return jsonify({"ok": True, "msg": f"Veículo {placa_limpa} validado como OK."})
+
+# =========================================================
+# MÓDULO: ANÁLISE DE GRADE E MONITORAMENTO DE VIAGENS
+# =========================================================
+
+def buscar_historico_posicoes_veiculo_data(placa, data_str, token_sys, timeout=180):
+    """
+    Busca o histórico do dia selecionado em janelas curtas para evitar timeout
+    quando o veículo possui muitas posições.
+    """
+    try:
+        data_base = datetime.strptime(data_str, "%Y-%m-%d").date()
+    except Exception:
+        data_base = datetime.now(FUSO_RELATORIO).date()
+
+    inicio_dt = datetime.combine(
+        data_base, datetime.min.time()
+    ).replace(tzinfo=FUSO_RELATORIO)
+    fim_dt = inicio_dt + pd.Timedelta(days=1)
+    # O SystemSat interpreta os limites recebidos como UTC. A análise,
+    # porém, trabalha com o dia civil de Campo Grande; convertemos os
+    # limites antes de montar cada requisição para não perder viagens
+    # noturnas no fim do dia local.
+    inicio_api_dt = inicio_dt.astimezone(timezone.utc).replace(tzinfo=None)
+    fim_api_dt = fim_dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+    url = "https://integration.systemsatx.com.br/Controlws/HistoryPosition/List"
+    headers = {
+        "Authorization": f"Bearer {token_sys}",
+        "Content-Type": "application/json",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+
+    cursor = inicio_api_dt
+    janela = pd.Timedelta(hours=6)
+
+    headers["Authorization"] = f"Bearer {token_sys}"
+    todas_posicoes = []
+
+    def subdividir_timeout(janela_inicio, janela_fim, nivel):
+        duracao_horas = (janela_fim - janela_inicio).total_seconds() / 3600
+        janela_minutos = (janela_fim - janela_inicio).total_seconds() / 60
+        if janela_minutos <= ANALISE_GRADE_JANELA_MINUTOS:
+            raise RuntimeError(
+                f"Não foi possível recuperar a janela mínima de "
+                f"{janela_minutos:.0f} minutos para {placa} após "
+                f"{ANALISE_GRADE_TENTATIVAS_TIMEOUT} tentativas."
+            )
+        meio = janela_inicio + (janela_fim - janela_inicio) / 2
+        print(
+            f"[Analise Grade] Timeout ({timeout}s) para {placa} "
+            f"na janela de {duracao_horas:.1f}h; subdividindo."
+        )
+        primeira = consultar_janela(janela_inicio, meio, nivel + 1)
+        segunda = consultar_janela(meio, janela_fim, nivel + 1)
+        if primeira is None or segunda is None:
+            return None
+        return primeira + segunda
+
+    def consultar_janela(janela_inicio, janela_fim, nivel=0):
+        payload = {
+            "TrackedUnitType": 1,
+            "TrackedUnitIntegrationCode": str(placa).strip().upper(),
+            "StartDatePosition": janela_inicio.strftime("%Y-%m-%dT%H:%M:%S"),
+            "EndDatePosition": janela_fim.strftime("%Y-%m-%dT%H:%M:%S")
+        }
+        ultima_excecao = None
+        for tentativa in range(1, ANALISE_GRADE_TENTATIVAS_TIMEOUT + 1):
+            try:
+                res = requests.post(url, json=payload, headers=headers, timeout=timeout)
+                break
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                ultima_excecao = e
+                if tentativa < ANALISE_GRADE_TENTATIVAS_TIMEOUT:
+                    print(
+                        f"[Analise Grade] Tentativa {tentativa}/"
+                        f"{ANALISE_GRADE_TENTATIVAS_TIMEOUT} excedeu o tempo para "
+                        f"{placa}; repetindo a janela."
+                    )
+        else:
+            if isinstance(ultima_excecao, requests.exceptions.ConnectionError):
+                if "timed out" not in str(ultima_excecao).lower():
+                    raise ultima_excecao
+            return subdividir_timeout(janela_inicio, janela_fim, nivel)
+
+        try:
+            if res.status_code == 409:
+                print(f"[Analise Grade] Veículo sem rastreador no SystemSat: {placa}")
+                return None
+            if res.status_code == 200:
+                dados = res.json()
+                if isinstance(dados, list):
+                    return dados
+                if isinstance(dados, dict):
+                    return dados.get("Positions") or dados.get("data") or []
+                return []
+            if res.status_code != 204:
+                print(f"[Analise Grade] Resposta {res.status_code} para {placa}")
+            return []
+        except Exception as e:
+            raise RuntimeError(
+                f"Falha ao processar resposta histórica de {placa}: {e}"
+            ) from e
+
+    while cursor < fim_api_dt:
+        janela_fim = min(cursor + janela, fim_api_dt)
+        posicoes_janela = consultar_janela(cursor, janela_fim)
+        if posicoes_janela is None:
+            return []
+        todas_posicoes.extend(posicoes_janela)
+        cursor = janela_fim
+
+    posicoes_limpas = []
+    chaves_vistas = set()
+    for p in todas_posicoes:
+        data_raw = p.get("EventDate") or p.get("Date") or p.get("DataEvento")
+        lat = p.get("Latitude")
+        lng = p.get("Longitude")
+        vel = p.get("Velocity") or p.get("Speed") or 0
+
+        if lat is None or lng is None or not data_raw:
+            continue
+        try:
+            lat_f = float(lat)
+            lng_f = float(lng)
+            if lat_f == 0.0 or lng_f == 0.0:
+                continue
+
+            chave = f"{data_raw}_{lat_f}_{lng_f}"
+            if chave in chaves_vistas:
+                continue
+            chaves_vistas.add(chave)
+
+            dt_obj = datetime.fromisoformat(str(data_raw).replace("Z", "+00:00"))
+            if dt_obj.tzinfo is None:
+                dt_obj = dt_obj.replace(tzinfo=FUSO_RELATORIO)
+            else:
+                dt_obj = dt_obj.astimezone(FUSO_RELATORIO)
+
+            posicoes_limpas.append({
+                "datetime": dt_obj,
+                "timestamp_str": dt_obj.strftime("%d/%m/%Y %H:%M:%S"),
+                "hora_str": dt_obj.strftime("%H:%M:%S"),
+                "lat": lat_f,
+                "lng": lng_f,
+                "vel": float(vel)
+            })
+        except Exception:
+            continue
+
+    posicoes_limpas.sort(key=lambda x: x["datetime"])
+    return posicoes_limpas
+
+def detectar_viagens_geofence(
+    posicoes,
+    ponto_inicial_coord,
+    ponto_final_coord,
+    raio_tolerancia_m=100,
+    pontos_rota=None
+):
+    """
+    Detecta ciclos de viagens percorridas entre o ponto inicial e o ponto final.
+    - ponto_inicial_coord: [lng, lat] ou (lat, lng)
+    - ponto_final_coord: [lng, lat] ou (lat, lng)
+    - raio_tolerancia_m: raio de tolerância em metros (padrão 100m)
+    """
+    if not posicoes or not ponto_inicial_coord or not ponto_final_coord:
+        return []
+
+    pontos = pontos_rota or [
+        {"nome": "", "coord": ponto_inicial_coord},
+        {"nome": "", "coord": ponto_final_coord},
+    ]
+    pontos = [p for p in pontos if p.get("coord")]
+    if len(pontos) < 2:
+        return []
+
+    viagens = []
+    proximo_intermediario = 1
+    eventos_pontos = []
+    rastro_viagem_atual = []
+    abertura_pendente = None
+    saida_pendente = None
+    deslocamento_minimo_abertura_m = max(300.0, raio_tolerancia_m * 3)
+    espera_maxima_abertura_min = 15.0
+
+    for p in posicoes:
+        distancia_inicio = geodesic(
+            (p["lat"], p["lng"]),
+            (pontos[0]["coord"][1], pontos[0]["coord"][0])
+        ).meters
+        distancia_final = geodesic(
+            (p["lat"], p["lng"]),
+            (pontos[-1]["coord"][1], pontos[-1]["coord"][0])
+        ).meters
+
+        if not eventos_pontos:
+            if distancia_inicio <= raio_tolerancia_m:
+                # A entrada apenas arma a abertura. O início real é a
+                # primeira posição fora do geofence, evitando incluir tempo
+                # parado no ponto de origem.
+                abertura_pendente = p
+                saida_pendente = None
+                continue
+            if abertura_pendente is not None:
+                if saida_pendente is None:
+                    # A primeira posição fora apenas marca a possível saída.
+                    # Ela só será confirmada se houver deslocamento efetivo
+                    # nas posições seguintes.
+                    saida_pendente = p
+                    if (
+                        distancia_inicio < deslocamento_minimo_abertura_m
+                        or float(p.get("vel") or 0) < 15
+                    ):
+                        continue
+
+                tempo_desde_abertura = (
+                    p["datetime"] - saida_pendente["datetime"]
+                ).total_seconds() / 60
+                deslocamento_desde_abertura = geodesic(
+                    (p["lat"], p["lng"]),
+                    (saida_pendente["lat"], saida_pendente["lng"])
+                ).meters
+                deslocamento_confirmado = (
+                    distancia_inicio >= deslocamento_minimo_abertura_m
+                    and (
+                        deslocamento_desde_abertura >= deslocamento_minimo_abertura_m
+                        or float(p.get("vel") or 0) >= 15
+                    )
+                )
+
+                # Um pequeno deslocamento para manobra ou correção do GPS
+                # não deve abrir uma viagem. Se não houver movimento efetivo
+                # em seguida, aguarda-se uma nova entrada no geofence.
+                if not deslocamento_confirmado:
+                    if tempo_desde_abertura <= espera_maxima_abertura_min:
+                        continue
+                    abertura_pendente = None
+                    saida_pendente = None
+                    continue
+
+                eventos_pontos = [{
+                    "nome": pontos[0].get("nome", ""),
+                    "hora": saida_pendente["hora_str"],
+                    "timestamp": saida_pendente["timestamp_str"],
+                    "datetime": saida_pendente["datetime"].isoformat(),
+                }]
+                rastro_viagem_atual = [] if p is saida_pendente else [saida_pendente]
+                abertura_pendente = None
+                saida_pendente = None
+            else:
+                continue
+
+        # Se o veículo voltou ao ponto de origem sem registrar nenhum
+        # intermediário, a saída anterior foi apenas uma movimentação de
+        # pátio/manobra. Cancela esse ciclo e rearma a próxima saída.
+        if (
+            distancia_inicio <= raio_tolerancia_m
+            and len(eventos_pontos) == 1
+            and proximo_intermediario == 1
+        ):
+            eventos_pontos = []
+            rastro_viagem_atual = []
+            abertura_pendente = p
+            saida_pendente = None
+            continue
+
+        rastro_viagem_atual.append(p)
+
+        # Pontos intermediários são informativos: a ausência de um registro
+        # não invalida a viagem. Procura qualquer ponto ainda não registrado,
+        # em ordem, para que um ponto perdido não impeça o registro dos
+        # seguintes.
+        if proximo_intermediario < len(pontos) - 1:
+            ponto_encontrado = None
+            indice_encontrado = None
+            for indice in range(proximo_intermediario, len(pontos) - 1):
+                ponto_intermediario = pontos[indice]
+                distancia_intermediario = geodesic(
+                    (p["lat"], p["lng"]),
+                    (ponto_intermediario["coord"][1], ponto_intermediario["coord"][0])
+                ).meters
+                if distancia_intermediario <= raio_tolerancia_m:
+                    ponto_encontrado = ponto_intermediario
+                    indice_encontrado = indice
+                    break
+
+            if ponto_encontrado is not None:
+                eventos_pontos.append({
+                    "nome": ponto_encontrado.get("nome", ""),
+                    "hora": p["hora_str"],
+                    "timestamp": p["timestamp_str"],
+                    "datetime": p["datetime"].isoformat(),
+                })
+                proximo_intermediario = indice_encontrado + 1
+                continue
+
+        if distancia_final <= raio_tolerancia_m:
+            eventos_pontos.append({
+                "nome": pontos[-1].get("nome", ""),
+                "hora": p["hora_str"],
+                "timestamp": p["timestamp_str"],
+                "datetime": p["datetime"].isoformat(),
+            })
+            inicio_dt = datetime.fromisoformat(eventos_pontos[0]["datetime"])
+            fim_dt = p["datetime"]
+            duracao_segundos = max(0, (fim_dt - inicio_dt).total_seconds())
+
+            lat_ini, lon_ini = pontos[0]["coord"][1], pontos[0]["coord"][0]
+            lat_fim, lon_fim = pontos[-1]["coord"][1], pontos[-1]["coord"][0]
+            dist_pontos_base = geodesic((lat_ini, lon_ini), (lat_fim, lon_fim)).meters
+            if duracao_segundos >= 60 or dist_pontos_base < (raio_tolerancia_m * 2):
+                minutos_totais = round(duracao_segundos / 60, 1)
+                horas = int(duracao_segundos // 3600)
+                minutos = int((duracao_segundos % 3600) // 60)
+                segundos = int(duracao_segundos % 60)
+
+                duracao_formatada = f"{horas:02d}h {minutos:02d}m {segundos:02d}s" if horas > 0 else f"{minutos:02d}m {segundos:02d}s"
+
+                step = max(1, len(rastro_viagem_atual) // 100)
+                viagens.append({
+                    "inicio_datetime": inicio_dt.isoformat(),
+                    "fim_datetime": fim_dt.isoformat(),
+                    "inicio_str": eventos_pontos[0]["timestamp"],
+                    "fim_str": eventos_pontos[-1]["timestamp"],
+                    "inicio_hora": eventos_pontos[0]["hora"],
+                    "fim_hora": eventos_pontos[-1]["hora"],
+                    "duracao_segundos": duracao_segundos,
+                    "duracao_minutos": minutos_totais,
+                    "duracao_formatada": duracao_formatada,
+                    "ponto_inicial_nome": pontos[0].get("nome", ""),
+                    "ponto_final_nome": pontos[-1].get("nome", ""),
+                    "horarios_pontos": [
+                        {k: v for k, v in evento.items() if k != "datetime"}
+                        for evento in eventos_pontos
+                    ],
+                    "amostras_gps": len(rastro_viagem_atual),
+                    "rastro": [[pt["lat"], pt["lng"]] for pt in rastro_viagem_atual[::step]]
+                })
+
+            eventos_pontos = []
+            proximo_intermediario = 1
+            rastro_viagem_atual = []
+            abertura_pendente = None
+
+    return viagens
+
+def viagem_pertence_data(viagem, data_consulta):
+    """Inclui viagens que começam ou terminam no dia solicitado."""
+    datas_viagem = {
+        datetime.fromisoformat(viagem["inicio_datetime"]).astimezone(
+            FUSO_RELATORIO
+        ).date().isoformat(),
+        datetime.fromisoformat(viagem["fim_datetime"]).astimezone(
+            FUSO_RELATORIO
+        ).date().isoformat(),
+    }
+    return data_consulta in datas_viagem
+
+@app.route("/analise-grade")
+def analise_grade():
+    if "logged_in" not in session: return redirect(url_for("login"))
+    data_hoje = datetime.now(FUSO_RELATORIO).strftime("%Y-%m-%d")
+    return render_template("analise_grade.html", data_hoje=data_hoje)
+
+@app.route("/api/analise-grade/executar", methods=["POST"])
+def api_analise_grade_executar():
+    if "logged_in" not in session: return jsonify({"error": "Não autenticado"}), 401
+    dados = request.json or {}
+    
+    empresa_nome = dados.get("empresa")
+    linha_id = dados.get("linha_id")
+    sentido_req = dados.get("sentido", "IDA").upper()
+    data_consulta = dados.get("data") or datetime.now(FUSO_RELATORIO).strftime("%Y-%m-%d")
+    try:
+        raio_tolerancia = int(dados.get("raio", 100))
+    except Exception:
+        raio_tolerancia = 100
+
+    if not empresa_nome or not linha_id:
+        return jsonify({"error": "Empresa e Linha são obrigatórios"}), 400
+
+    token_agems = session.get("token_agems")
+    try:
+        token_sys = login_systemsat_conectividade()
+    except Exception as e:
+        return jsonify({"error": f"Falha na autenticação do SystemSat: {e}"}), 500
+
+    # 1. A fonte de elegibilidade é a vistoria atual da AGEMS, não o cadastro
+    # local, que pode estar desatualizado.
+    try:
+        veiculos_agems = buscar_todos_veiculos(token_agems)
+        empresas_regulares = buscar_empresas_regulares(token_agems)
+        pedidos_desativacao = buscar_pedidos_desativacao(token_agems)
+    except Exception as e:
+        return jsonify({"error": f"Não foi possível carregar a frota atual: {e}"}), 502
+
+    empresa_filtro = normalizar_nome(empresa_nome)
+    hoje = datetime.now(FUSO_RELATORIO).date()
+    prefixos_locais = {
+        veiculo.placa: veiculo.prefixo or ""
+        for veiculo in Veiculo.query.all()
+    }
+    veiculos_empresa = []
+    for placa, dados in veiculos_agems.items():
+        dados_veiculo, motivo_desativacao = selecionar_ocorrencia_veiculo(
+            dados, pedidos_desativacao.get(placa)
+        )
+        empresa_veiculo = normalizar_nome(dados_veiculo.get("empresa"))
+        mesma_empresa = (
+            empresa_filtro == empresa_veiculo
+            or empresa_filtro in empresa_veiculo
+            or empresa_veiculo in empresa_filtro
+        )
+        if not mesma_empresa or not dados_veiculo.get("ativo"):
+            continue
+        try:
+            vistoria_valida = data_vistoria_valida(
+                dados_veiculo.get("vencimento_vistoria"), hoje
+            )
+        except (TypeError, ValueError):
+            vistoria_valida = False
+        empresa_regular = empresa_veiculo in empresas_regulares
+        if not vistoria_valida or not empresa_regular or motivo_desativacao is not None:
+            continue
+        placa_limpa = limpar_placa(placa)
+        veiculos_empresa.append({
+            "placa": placa_limpa,
+            "prefixo": dados_veiculo.get("prefixo") or (
+                prefixos_locais.get(placa_limpa, "")
+            ),
+            "empresa": dados_veiculo.get("empresa") or empresa_nome,
+        })
+
+    if not veiculos_empresa:
+        return jsonify({
+            "error": (
+                f"Nenhum veículo elegível para instalação "
+                f"(ativo, com vistoria válida, empresa regular e sem "
+                f"desativação pendente) foi encontrado para a empresa "
+                f"'{empresa_nome}'."
+            )
+        }), 404
+
+    # A partir daqui só há chamadas externas potencialmente longas. Libera a
+    # conexão do PostgreSQL antes de iniciar as consultas de telemetria.
+    db.session.remove()
+
+    # 2. Obter itinerário e pontos da linha via Monitora
+    try:
+        linha_data = buscar_linha_trajeto(token_agems, linha_id)
+    except Exception as e:
+        return jsonify({"error": f"Erro ao buscar dados da linha na AGEMS: {e}"}), 500
+
+    if not linha_data:
+        return jsonify({"error": "Linha não encontrada na AGEMS"}), 404
+
+    dict_pontos = buscar_todos_pontos_monitora(token_agems)
+
+    def obter_coord(nome_ponto):
+        if not nome_ponto: return None
+        n_clean = nome_ponto.strip()
+        if n_clean in dict_pontos:
+            return dict_pontos[n_clean]
+        nome_normalizado = normalizar_nome(n_clean)
+        candidatos_exatos = []
+        for k, v in dict_pontos.items():
+            chave_normalizada = normalizar_nome(k)
+            # Os nomes dos pontos podem vir como "61 - CAMPO GRANDE".
+            # Prioriza o nome do ponto completo antes de usar substring.
+            nome_sem_codigo = re.sub(r"^\d+\s*-\s*", "", chave_normalizada)
+            if nome_sem_codigo == nome_normalizado:
+                candidatos_exatos.append(v)
+        if candidatos_exatos:
+            return candidatos_exatos[0]
+        for k, v in dict_pontos.items():
+            if n_clean in k or k in n_clean:
+                return v
+        return None
+
+    sentidos_disponiveis = {
+        str(s.get("sentido", "")).upper(): s
+        for s in linha_data.get("sentidos", [])
+    }
+    if sentido_req in {"AMBOS", "IDA + VOLTA", "IDA/VOLTA"}:
+        sentidos_selecionados = ["IDA", "VOLTA"]
+    else:
+        sentidos_selecionados = [sentido_req]
+
+    configuracoes_sentido = []
+    rotas_mapa = []
+    for nome_sentido in sentidos_selecionados:
+        sentido_obj = sentidos_disponiveis.get(nome_sentido)
+        if not sentido_obj:
+            print(f"[Analise Grade] Sentido {nome_sentido} não encontrado; ignorado.")
+            continue
+        trajetos = sentido_obj.get("trajetos", [])
+        if not trajetos:
+            continue
+
+        ponto_inicial_nome = trajetos[0].get("seccionamento", {}).get("pontoInicial", {}).get("nome", "").strip()
+        ponto_final_nome = trajetos[-1].get("seccionamento", {}).get("pontoFinal", {}).get("nome", "").strip()
+        coord_inicial = obter_coord(ponto_inicial_nome)
+        coord_final = obter_coord(ponto_final_nome)
+        if not coord_inicial or not coord_final:
+            return jsonify({
+                "error": f"Não foi possível localizar as coordenadas dos pontos do sentido "
+                         f"{nome_sentido}: início ('{ponto_inicial_nome}': {bool(coord_inicial)}) | "
+                         f"fim ('{ponto_final_nome}': {bool(coord_final)})"
+            }), 400
+
+        lista_nomes = [ponto_inicial_nome]
+        for trajeto in trajetos:
+            ponto_final = trajeto.get("seccionamento", {}).get("pontoFinal", {}).get("nome")
+            if ponto_final:
+                lista_nomes.append(ponto_final.strip())
+
+        coordenadas_rota = []
+        pontos_rota = []
+        for nome_ponto in lista_nomes:
+            coordenada = obter_coord(nome_ponto)
+            if coordenada:
+                coordenadas_rota.append(coordenada)
+                if not pontos_rota or pontos_rota[-1]["coord"] != coordenada:
+                    pontos_rota.append({"nome": nome_ponto, "coord": coordenada})
+
+        if len(coordenadas_rota) >= 2:
+            geometria = osrm_routing(coordenadas_rota) or coordenadas_rota
+            rotas_mapa.append([[p[1], p[0]] for p in geometria])
+
+        configuracoes_sentido.append({
+            "nome": nome_sentido,
+            "ponto_inicial_nome": ponto_inicial_nome,
+            "ponto_final_nome": ponto_final_nome,
+            "coord_inicial": coord_inicial,
+            "coord_final": coord_final,
+            "pontos_rota": pontos_rota,
+        })
+
+    if not configuracoes_sentido:
+        return jsonify({"error": "Nenhum sentido possui trajeto cadastrado para esta linha"}), 404
+
+    # 4. Processar telemetria de cada veículo da empresa em paralelo para máxima velocidade
+    todas_viagens = []
+    veiculos_com_viagem = set()
+    veiculos_com_erro = []
+    veiculos_lista = [
+        (v["placa"], v.get("prefixo") or "")
+        for v in veiculos_empresa
+        if v.get("placa")
+    ]
+    veiculos_analisados = len(veiculos_lista)
+
+    def consultar_veiculo(item_v):
+        p_placa, p_pref = item_v
+        pos = buscar_historico_posicoes_veiculo_data(
+            p_placa,
+            data_consulta,
+            token_sys,
+            timeout=ANALISE_GRADE_TIMEOUT
+        )
+        if not pos:
+            return []
+        viagens_veiculo = []
+        for config in configuracoes_sentido:
+            vgs = detectar_viagens_geofence(
+                posicoes=pos,
+                ponto_inicial_coord=config["coord_inicial"],
+                ponto_final_coord=config["coord_final"],
+                raio_tolerancia_m=raio_tolerancia,
+                pontos_rota=config["pontos_rota"]
+            )
+            for viagem in vgs:
+                if not viagem_pertence_data(viagem, data_consulta):
+                    continue
+                viagem["placa"] = p_placa
+                viagem["prefixo"] = p_pref
+                viagem["empresa"] = empresa_nome
+                viagem["linha_nome"] = f"{linha_data.get('numero', '')} - {linha_data.get('nome', '')}"
+                viagem["sentido"] = config["nome"]
+                viagem["ponto_inicial_nome"] = config["ponto_inicial_nome"]
+                viagem["ponto_final_nome"] = config["ponto_final_nome"]
+                viagens_veiculo.append(viagem)
+        return viagens_veiculo
+
+    max_workers = min(ANALISE_GRADE_WORKERS, len(veiculos_lista))
+    print(
+        f"[Analise Grade] Processando {veiculos_analisados} veículos "
+        f"com {max_workers} consultas simultâneas."
+    )
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futuros = {executor.submit(consultar_veiculo, item): item[0] for item in veiculos_lista}
+        for futuro in as_completed(futuros):
+            placa_con = futuros[futuro]
+            try:
+                vgs_ret = futuro.result()
+                if vgs_ret:
+                    todas_viagens.extend(vgs_ret)
+                    veiculos_com_viagem.add(placa_con)
+            except Exception as e:
+                print(f"[Analise Grade] Erro no processamento de {placa_con}: {e}")
+                veiculos_com_erro.append({
+                    "placa": placa_con,
+                    "erro": str(e),
+                })
+
+    todas_viagens.sort(key=lambda x: x["inicio_datetime"])
+
+    total_viagens = len(todas_viagens)
+    duracao_media_min = round(sum(v["duracao_minutos"] for v in todas_viagens) / total_viagens, 1) if total_viagens > 0 else 0
+    duracao_media_fmt = f"{int(duracao_media_min // 60):02d}h {int(duracao_media_min % 60):02d}m" if duracao_media_min >= 60 else f"{int(duracao_media_min)}m"
+
+    return jsonify({
+        "ok": True,
+        "resumo": {
+            "total_viagens": total_viagens,
+            "veiculos_operando": len(veiculos_com_viagem),
+            "veiculos_analisados": veiculos_analisados,
+            "veiculos_com_erro": veiculos_com_erro,
+            "duracao_media_min": duracao_media_min,
+            "duracao_media_formatada": duracao_media_fmt,
+            "linha_nome": f"{linha_data.get('numero', '')} - {linha_data.get('nome', '')}",
+            "sentido": "IDA + VOLTA" if len(configuracoes_sentido) > 1 else configuracoes_sentido[0]["nome"],
+            "ponto_inicial": {
+                "nome": "Vários pontos (IDA + VOLTA)" if len(configuracoes_sentido) > 1 else configuracoes_sentido[0]["ponto_inicial_nome"],
+                "lat": configuracoes_sentido[0]["coord_inicial"][1],
+                "lng": configuracoes_sentido[0]["coord_inicial"][0]
+            },
+            "ponto_final": {
+                "nome": "Vários pontos (IDA + VOLTA)" if len(configuracoes_sentido) > 1 else configuracoes_sentido[0]["ponto_final_nome"],
+                "lat": configuracoes_sentido[0]["coord_final"][1],
+                "lng": configuracoes_sentido[0]["coord_final"][0]
+            },
+            "raio_tolerancia_m": raio_tolerancia,
+            "data_consulta": data_consulta
+        },
+        "rota_geometria": rotas_mapa[0] if rotas_mapa else [],
+        "rotas_geometria": rotas_mapa,
+        "viagens": todas_viagens
+    })
+
+@app.route("/api/analise-grade/exportar", methods=["POST"])
+def api_analise_grade_exportar():
+    if "logged_in" not in session: return jsonify({"error": "Não autenticado"}), 401
+    dados = request.json or {}
+    formato = dados.get("formato", "excel").lower()
+    viagens = dados.get("viagens", [])
+    meta = dados.get("meta", {})
+
+    linhas_relatorio = []
+    for i, v in enumerate(viagens, 1):
+        linhas_relatorio.append({
+            "Nº": i,
+            "Placa": v.get("placa"),
+            "Prefixo": v.get("prefixo"),
+            "Empresa": v.get("empresa"),
+            "Linha": v.get("linha_nome"),
+            "Sentido": v.get("sentido"),
+            "Ponto Inicial (Origem)": v.get("ponto_inicial_nome"),
+            "Horário Início": v.get("inicio_str"),
+            "Ponto Final (Destino)": v.get("ponto_final_nome"),
+            "Horário Fim": v.get("fim_str"),
+            "Duração Total": v.get("duracao_formatada"),
+            "Duração (Minutos)": v.get("duracao_minutos"),
+            "Horários dos Pontos": " | ".join(
+                f"{p.get('nome', 'Ponto')}: {p.get('hora', '')}"
+                for p in (v.get("horarios_pontos") or [])
+            ),
+            "Qtd Pontos GPS": v.get("amostras_gps")
+        })
+
+    df = pd.DataFrame(linhas_relatorio)
+
+    output = io.BytesIO()
+    data_str = meta.get("data_consulta", datetime.now().strftime("%Y-%m-%d"))
+    filename_base = f"analise_grade_{data_str}"
+
+    if formato == "csv":
+        csv_bytes = df.to_csv(index=False, sep=";", encoding="utf-8-sig")
+        output.write(csv_bytes.encode("utf-8-sig"))
+        output.seek(0)
+        return send_file(
+            output,
+            mimetype="text/csv",
+            as_attachment=True,
+            download_name=f"{filename_base}.csv"
+        )
+    else: # Excel
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, sheet_name="Viagens Concluídas", index=False)
+        output.seek(0)
+        return send_file(
+            output,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=f"{filename_base}.xlsx"
+        )
 
 with app.app_context():
     recriar_cache_relatorio()

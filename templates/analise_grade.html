@@ -1,0 +1,666 @@
+{% extends "layout.html" %}
+
+{% block head %}
+<!-- Leaflet CSS & JS para renderização ágil de mapa e rotas -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<style>
+    .kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    .kpi-card {
+        background: var(--bg-card, #ffffff);
+        border: 1px solid var(--border-color, #e5e7eb);
+        border-radius: 12px;
+        padding: 1.25rem;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .kpi-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    }
+    .kpi-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.35rem;
+    }
+    .kpi-title {
+        font-size: 0.8rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--text-muted, #6b7280);
+        margin-bottom: 0.25rem;
+    }
+    .kpi-value {
+        font-size: 1.5rem;
+        font-weight: 800;
+        color: var(--text-primary, #111827);
+        font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+    .map-container {
+        height: 420px;
+        width: 100%;
+        border-radius: 12px;
+        border: 1px solid var(--border-color, #e5e7eb);
+        z-index: 1;
+    }
+    .tag-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.25rem 0.65rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+    .badge-ida {
+        background: rgba(37, 99, 235, 0.12);
+        color: #1d4ed8;
+        border: 1px solid rgba(37, 99, 235, 0.25);
+    }
+    .badge-volta {
+        background: rgba(16, 185, 129, 0.12);
+        color: #047857;
+        border: 1px solid rgba(16, 185, 129, 0.25);
+    }
+    .badge-plate {
+        background: #1e293b;
+        color: #f8fafc;
+        font-family: 'JetBrains Mono', monospace;
+        letter-spacing: 0.5px;
+        padding: 0.25rem 0.6rem;
+        border-radius: 6px;
+        font-weight: 600;
+        font-size: 0.85rem;
+    }
+    .analise-horario {
+        color: var(--text-heading) !important;
+        font-weight: 800;
+        font-family: 'JetBrains Mono', monospace;
+        letter-spacing: 0.02em;
+    }
+    .analise-ponto-horario {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        background: #1d4ed8;
+        color: #ffffff;
+        border: 1px solid #1e40af;
+        border-radius: 6px;
+        padding: 0.35rem 0.65rem;
+    }
+    .analise-ponto-horario strong {
+        color: #ffffff;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-left">
+        <h1><i class="fa-solid fa-clock-rotate-left"></i> Análise de Grade e Viagens</h1>
+        <p class="page-subtitle">Monitoramento de cumprimento de horários, ciclos de viagem e geofencing de linhas de ônibus</p>
+    </div>
+</div>
+
+<!-- FORMULÁRIO DE SELEÇÃO DE PARÂMETROS -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <form id="form-analise-grade" onsubmit="executarAnaliseGrade(event)">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.25rem; align-items: flex-end;">
+            <!-- Pasta / Empresa -->
+            <div>
+                <label style="font-weight:600; font-size:0.875rem; margin-bottom:0.4rem; display:block;">
+                    <i class="fa-solid fa-folder" style="color:var(--text-muted); margin-right:4px;"></i> Pasta (Empresa)
+                </label>
+                <select id="sel-pasta" class="search-input" style="width:100%;" required>
+                    <option value="">Carregando pastas...</option>
+                </select>
+            </div>
+
+            <!-- Linha -->
+            <div>
+                <label style="font-weight:600; font-size:0.875rem; margin-bottom:0.4rem; display:block;">
+                    <i class="fa-solid fa-route" style="color:var(--text-muted); margin-right:4px;"></i> Linha / Itinerário
+                </label>
+                <select id="sel-linha" class="search-input" style="width:100%;" disabled required>
+                    <option value="">Selecione a Pasta primeiro</option>
+                </select>
+            </div>
+
+            <!-- Sentido -->
+            <div>
+                <label style="font-weight:600; font-size:0.875rem; margin-bottom:0.4rem; display:block;">
+                    <i class="fa-solid fa-arrows-left-right" style="color:var(--text-muted); margin-right:4px;"></i> Sentido
+                </label>
+                <select id="sel-sentido" class="search-input" style="width:100%;" required>
+                    <option value="AMBOS">IDA + VOLTA (grade completa)</option>
+                    <option value="IDA">IDA</option>
+                    <option value="VOLTA">VOLTA</option>
+                </select>
+            </div>
+
+            <!-- Data da Consulta -->
+            <div>
+                <label style="font-weight:600; font-size:0.875rem; margin-bottom:0.4rem; display:block;">
+                    <i class="fa-regular fa-calendar" style="color:var(--text-muted); margin-right:4px;"></i> Data da Telemetria
+                </label>
+                <input type="date" id="inp-data" class="search-input" style="width:100%;" value="{{ data_hoje }}" required>
+            </div>
+
+            <!-- Raio de Tolerância -->
+            <div style="max-width: 180px;">
+                <label style="font-weight:600; font-size:0.875rem; margin-bottom:0.4rem; display:block;">
+                    <i class="fa-solid fa-bullseye" style="color:var(--text-muted); margin-right:4px;"></i> Raio Geofence
+                </label>
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <input type="number" id="inp-raio" class="search-input" style="width:100%;" value="100" min="20" max="1000" step="10" required>
+                    <span style="font-size:0.85rem; color:var(--text-muted); font-weight:600;">m</span>
+                </div>
+            </div>
+
+            <!-- Botão de Ação -->
+            <div>
+                <button type="submit" id="btn-executar" class="btn btn-primary" style="width:100%; height:42px;">
+                    <i class="fa-solid fa-magnifying-glass-location"></i> Analisar Grade
+                </button>
+            </div>
+        </div>
+    </form>
+
+    <!-- Barra de Progresso / Loading -->
+    <div id="loading-analise" style="display:none; margin-top:1.5rem; text-align:center; padding:1rem; background:rgba(37,99,235,0.05); border-radius:8px; border:1px dashed #93c5fd;">
+        <i class="fa-solid fa-circle-notch fa-spin" style="font-size:1.5rem; color:#2563eb; margin-bottom:0.5rem;"></i>
+        <div id="loading-msg" style="font-weight:600; color:#1e40af; font-size:0.95rem;">Cruzando dados de telemetria e pontos de parada...</div>
+        <div style="font-size:0.8rem; color:#6b7280; margin-top:0.25rem;">Isso pode levar alguns segundos dependendo da quantidade de posições de GPS.</div>
+    </div>
+</div>
+
+<!-- SEÇÃO DE RESULTADOS -->
+<div id="secao-resultados" style="display:none;">
+
+    <!-- CARDS DE RESUMO (KPIS) -->
+    <div class="kpi-grid">
+        <div class="kpi-card">
+            <div class="kpi-icon" style="background:rgba(37,99,235,0.1); color:#2563eb;">
+                <i class="fa-solid fa-flag-checkered"></i>
+            </div>
+            <div>
+                <div class="kpi-title">Viagens Concluídas</div>
+                <div class="kpi-value" id="kpi-total-viagens">0</div>
+            </div>
+        </div>
+
+        <div class="kpi-card">
+            <div class="kpi-icon" style="background:rgba(16,185,129,0.1); color:#10b981;">
+                <i class="fa-solid fa-bus-simple"></i>
+            </div>
+            <div>
+                <div class="kpi-title">Veículos em Operação</div>
+                <div class="kpi-value" id="kpi-veiculos-ativos">0</div>
+            </div>
+        </div>
+
+        <div class="kpi-card">
+            <div class="kpi-icon" style="background:rgba(245,158,11,0.1); color:#d97706;">
+                <i class="fa-solid fa-stopwatch"></i>
+            </div>
+            <div>
+                <div class="kpi-title">Duração Média</div>
+                <div class="kpi-value" id="kpi-duracao-media">0m</div>
+            </div>
+        </div>
+
+        <div class="kpi-card">
+            <div class="kpi-icon" style="background:rgba(99,102,241,0.1); color:#6366f1;">
+                <i class="fa-solid fa-location-dot"></i>
+            </div>
+            <div>
+                <div class="kpi-title">Tolerância Geofence</div>
+                <div class="kpi-value" id="kpi-raio">100m</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAPA INTERATIVO E DETALHES DE PONTOS -->
+    <div class="card" style="margin-bottom:1.5rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.5rem;">
+            <div style="display:flex; align-items:center; gap:0.75rem;">
+                <h3 style="margin:0; font-size:1.1rem; font-weight:700;">
+                    <i class="fa-solid fa-map-location-dot" style="color:#2563eb;"></i> Traçado da Rota e Geofences
+                </h3>
+                <span id="badge-sentido" class="tag-badge badge-ida">IDA</span>
+            </div>
+            <div style="font-size:0.85rem; color:var(--text-muted);">
+                <span style="color:#10b981; font-weight:700;">● Origem:</span> <span id="lbl-origem-nome">-</span> &nbsp;|&nbsp;
+                <span style="color:#ef4444; font-weight:700;">● Destino:</span> <span id="lbl-destino-nome">-</span>
+            </div>
+        </div>
+        <div id="mapa-grade" class="map-container"></div>
+    </div>
+
+    <!-- TABELA DE VIAGENS CONCLUÍDAS -->
+    <div class="card">
+        <div id="alerta-erros-consulta" style="display:none; margin-bottom:1rem; padding:0.75rem 1rem; border:1px solid #f59e0b; border-radius:8px; background:#fffbeb; color:#92400e; font-weight:600;"></div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem; flex-wrap:wrap; gap:0.75rem;">
+            <div>
+                <h3 style="margin:0; font-size:1.1rem; font-weight:700;">
+                    <i class="fa-solid fa-list-check" style="color:#2563eb;"></i> Tabela de Viagens Concluídas
+                </h3>
+                <p style="margin:0.2rem 0 0 0; font-size:0.85rem; color:var(--text-muted);">
+                    Registros sequenciais de entrada no Ponto Inicial e conclusão no Ponto Final
+                </p>
+            </div>
+            <div style="display:flex; gap:0.5rem;">
+                <button onclick="exportarRelatorio('excel')" class="btn btn-secondary" style="font-size:0.85rem; padding:0.45rem 0.85rem;">
+                    <i class="fa-solid fa-file-excel" style="color:#10b981;"></i> Exportar Excel
+                </button>
+                <button onclick="exportarRelatorio('csv')" class="btn btn-secondary" style="font-size:0.85rem; padding:0.45rem 0.85rem;">
+                    <i class="fa-solid fa-file-csv" style="color:#3b82f6;"></i> Exportar CSV
+                </button>
+            </div>
+        </div>
+
+        <div style="overflow-x:auto;">
+            <table class="data-table" id="tabela-viagens" style="width:100%; text-align:left;">
+                <thead>
+                    <tr>
+                        <th style="width:50px;">#</th>
+                        <th>Placa / Prefixo</th>
+                        <th>Início (Ponto Inicial)</th>
+                        <th>Fim (Ponto Final)</th>
+                        <th>Duração da Viagem</th>
+                        <th>Amostras GPS</th>
+                        <th style="text-align:center;">Pontos</th>
+                        <th style="text-align:center;">Mapa</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody-viagens">
+                    <!-- Preenchido dinamicamente via JS -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let mapInstance = null;
+    let rotaLayerGroup = null;
+    let rastroLayerGroup = null;
+    let dadosAnaliseCache = null;
+
+    // Inicializar carregamento de pastas
+    document.addEventListener("DOMContentLoaded", () => {
+        carregarPastas();
+    });
+
+    async function carregarPastas() {
+        const selPasta = document.getElementById("sel-pasta");
+        try {
+            const res = await fetch("{{ url_for('api_pastas') }}");
+            const data = await res.json();
+            selPasta.innerHTML = '<option value="">Selecione a Pasta</option>';
+            data.forEach(p => {
+                const empNome = p.empresa ? (p.empresa.nomeFantasia || p.empresa.razaoSocial) : 'Desconhecida';
+                selPasta.innerHTML += `<option value="${p.id}" data-empresa="${empNome}">${p.numero} - ${empNome}</option>`;
+            });
+        } catch (e) {
+            selPasta.innerHTML = '<option value="">Erro ao carregar pastas</option>';
+        }
+    }
+
+    document.getElementById("sel-pasta").addEventListener("change", async function() {
+        const pastaId = this.value;
+        const selLinha = document.getElementById("sel-linha");
+        if (!pastaId) {
+            selLinha.innerHTML = '<option value="">Selecione a Pasta primeiro</option>';
+            selLinha.disabled = true;
+            return;
+        }
+
+        selLinha.disabled = true;
+        selLinha.innerHTML = '<option value="">Carregando linhas...</option>';
+
+        try {
+            const res = await fetch(`{{ url_for('api_linhas') }}?pasta_id=${pastaId}`);
+            const linhas = await res.json();
+            if (!linhas || linhas.length === 0) {
+                selLinha.innerHTML = '<option value="">Nenhuma linha encontrada nesta pasta</option>';
+                return;
+            }
+            selLinha.innerHTML = '<option value="">Selecione a Linha</option>';
+            linhas.forEach(l => {
+                selLinha.innerHTML += `<option value="${l.id}">${l.numero ? l.numero + ' - ' : ''}${l.nome}</option>`;
+            });
+            selLinha.disabled = false;
+        } catch (e) {
+            selLinha.innerHTML = '<option value="">Erro ao buscar linhas</option>';
+        }
+    });
+
+    async function executarAnaliseGrade(e) {
+        e.preventDefault();
+
+        const selPasta = document.getElementById("sel-pasta");
+        const optPasta = selPasta.options[selPasta.selectedIndex];
+        const empresaNome = optPasta ? optPasta.getAttribute("data-empresa") : null;
+        const linhaId = document.getElementById("sel-linha").value;
+        const sentido = document.getElementById("sel-sentido").value;
+        const dataConsulta = document.getElementById("inp-data").value;
+        const raio = parseInt(document.getElementById("inp-raio").value) || 100;
+
+        if (!empresaNome || !linhaId) {
+            alert("Por favor, selecione a pasta da empresa e a linha.");
+            return;
+        }
+
+        const btn = document.getElementById("btn-executar");
+        const loading = document.getElementById("loading-analise");
+        const secaoResultados = document.getElementById("secao-resultados");
+
+        btn.disabled = true;
+        loading.style.display = "block";
+        secaoResultados.style.display = "none";
+
+        try {
+            const res = await fetch("{{ url_for('api_analise_grade_executar') }}", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    empresa: empresaNome,
+                    linha_id: linhaId,
+                    sentido: sentido,
+                    data: dataConsulta,
+                    raio: raio
+                })
+            });
+
+            const data = await res.json();
+            if (!res.ok || !data.ok) {
+                alert(data.error || "Erro ao executar análise de grade.");
+                return;
+            }
+
+            dadosAnaliseCache = data;
+            renderizarResultados(data);
+            secaoResultados.style.display = "block";
+
+            // Rolagem suave para os resultados
+            setTimeout(() => {
+                secaoResultados.scrollIntoView({ behavior: 'smooth' });
+                if (mapInstance) mapInstance.invalidateSize();
+            }, 200);
+
+        } catch (err) {
+            alert("Falha na comunicação com o servidor: " + err.message);
+        } finally {
+            btn.disabled = false;
+            loading.style.display = "none";
+        }
+    }
+
+    function renderizarResultados(data) {
+        const resumo = data.resumo;
+        const viagens = data.viagens || [];
+
+        // Atualizar KPIs
+        document.getElementById("kpi-total-viagens").textContent = resumo.total_viagens;
+        document.getElementById("kpi-veiculos-ativos").textContent = `${resumo.veiculos_operando} / ${resumo.veiculos_analisados}`;
+        document.getElementById("kpi-duracao-media").textContent = resumo.duracao_media_formatada;
+        document.getElementById("kpi-raio").textContent = `${resumo.raio_tolerancia_m}m`;
+        const alertaErros = document.getElementById("alerta-erros-consulta");
+        const errosConsulta = resumo.veiculos_com_erro || [];
+        if (errosConsulta.length > 0) {
+            alertaErros.textContent = `${errosConsulta.length} veículo(s) não puderam ser consultados completamente. Eles não foram considerados como "sem viagem".`;
+            alertaErros.style.display = "block";
+        } else {
+            alertaErros.style.display = "none";
+        }
+
+        // Badge Sentido e Nomes
+        const badgeSentido = document.getElementById("badge-sentido");
+        badgeSentido.textContent = resumo.sentido;
+        badgeSentido.className = `tag-badge ${
+            resumo.sentido === 'IDA' ? 'badge-ida' :
+            resumo.sentido === 'VOLTA' ? 'badge-volta' : 'badge-ida'
+        }`;
+
+        document.getElementById("lbl-origem-nome").textContent = resumo.ponto_inicial.nome;
+        document.getElementById("lbl-destino-nome").textContent = resumo.ponto_final.nome;
+
+        // Renderizar Mapa
+        inicializarMapa(data);
+
+        // Preencher Tabela
+        const tbody = document.getElementById("tbody-viagens");
+        tbody.innerHTML = "";
+
+        if (viagens.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="8" style="text-align:center; padding:2rem; color:var(--text-muted);">
+                        <i class="fa-solid fa-circle-exclamation" style="font-size:1.5rem; margin-bottom:0.5rem; display:block; color:#f59e0b;"></i>
+                        Nenhuma viagem completa detectada para os veículos analisados nesta data e sentido.
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        viagens.forEach((v, idx) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td style="font-weight:700; color:var(--text-muted);">${idx + 1}</td>
+                <td>
+                    <span class="badge-plate">${v.placa}</span>
+                    ${v.prefixo ? `<span style="font-size:0.8rem; color:var(--text-muted); margin-left:6px;">(${v.prefixo})</span>` : ''}
+                </td>
+                <td>
+                    <div class="analise-horario">${v.inicio_hora}</div>
+                    <div style="font-size:0.75rem; color:var(--text-muted);">${v.ponto_inicial_nome}</div>
+                </td>
+                <td>
+                    <div class="analise-horario">${v.fim_hora}</div>
+                    <div style="font-size:0.75rem; color:var(--text-muted);">${v.ponto_final_nome}</div>
+                </td>
+                <td>
+                    <strong style="color:#2563eb;">${v.duracao_formatada}</strong>
+                    <div style="font-size:0.75rem; color:var(--text-muted);">${v.duracao_minutos} min</div>
+                </td>
+                <td>
+                    <span class="status-badge status-ok">${v.amostras_gps} pts</span>
+                </td>
+                <td style="text-align:center;">
+                    <button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="alternarPontos(${idx})" title="Mostrar horários dos pontos">
+                        <i class="fa-solid fa-list"></i> Horários
+                    </button>
+                </td>
+                <td style="text-align:center;">
+                    <button class="btn btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="destacarRastroViagem(${idx})" title="Ver rastro no mapa">
+                        <i class="fa-solid fa-eye"></i> Rastro
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+            const detalhe = document.createElement("tr");
+            detalhe.id = `detalhe-pontos-${idx}`;
+            detalhe.style.display = "none";
+            detalhe.innerHTML = `
+                <td colspan="8" style="background:#f8fafc; padding:0.75rem 1.5rem;">
+                    <div style="display:flex; flex-wrap:wrap; gap:0.5rem 1rem;">
+                        ${(v.horarios_pontos || []).map(p => `
+                            <span class="analise-ponto-horario">
+                                <strong>${p.nome || 'Ponto'}</strong>: ${p.hora}
+                            </span>
+                        `).join("")}
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(detalhe);
+        });
+    }
+
+    function alternarPontos(idx) {
+        const detalhe = document.getElementById(`detalhe-pontos-${idx}`);
+        if (detalhe) {
+            detalhe.style.display = detalhe.style.display === "none" ? "table-row" : "none";
+        }
+    }
+
+    function inicializarMapa(data) {
+        const resumo = data.resumo;
+        const latIni = resumo.ponto_inicial.lat;
+        const lngIni = resumo.ponto_inicial.lng;
+        const latFim = resumo.ponto_final.lat;
+        const lngFim = resumo.ponto_final.lng;
+        const raio = resumo.raio_tolerancia_m;
+
+        if (!mapInstance) {
+            mapInstance = L.map('mapa-grade').setView([latIni, lngIni], 12);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '© OpenStreetMap'
+            }).addTo(mapInstance);
+
+            rotaLayerGroup = L.layerGroup().addTo(mapInstance);
+            rastroLayerGroup = L.layerGroup().addTo(mapInstance);
+        }
+
+        rotaLayerGroup.clearLayers();
+        rastroLayerGroup.clearLayers();
+
+        // 1. Círculo e Marcador do Ponto Inicial (Verde)
+        L.circle([latIni, lngIni], {
+            color: '#10b981',
+            fillColor: '#10b981',
+            fillOpacity: 0.25,
+            radius: raio
+        }).addTo(rotaLayerGroup);
+
+        L.circleMarker([latIni, lngIni], {
+            radius: 8,
+            fillColor: '#10b981',
+            color: '#ffffff',
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.9
+        }).bindPopup(`<b>Origem:</b> ${resumo.ponto_inicial.nome}<br>Raio Geofence: ${raio}m`).addTo(rotaLayerGroup);
+
+        // 2. Círculo e Marcador do Ponto Final (Vermelho)
+        L.circle([latFim, lngFim], {
+            color: '#ef4444',
+            fillColor: '#ef4444',
+            fillOpacity: 0.25,
+            radius: raio
+        }).addTo(rotaLayerGroup);
+
+        L.circleMarker([latFim, lngFim], {
+            radius: 8,
+            fillColor: '#ef4444',
+            color: '#ffffff',
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.9
+        }).bindPopup(`<b>Destino:</b> ${resumo.ponto_final.nome}<br>Raio Geofence: ${raio}m`).addTo(rotaLayerGroup);
+
+        // 3. Linhas dos itinerários (IDA e VOLTA podem ser exibidas juntas)
+        const rotas = data.rotas_geometria || (
+            data.rota_geometria ? [data.rota_geometria] : []
+        );
+        if (rotas.length > 0) {
+            const bounds = L.latLngBounds([]);
+            rotas.forEach((geometria, indice) => {
+                const rotaPolyline = L.polyline(geometria, {
+                    color: indice === 0 ? '#2563eb' : '#10b981',
+                    weight: 4,
+                    opacity: 0.7,
+                    dashArray: '6, 6'
+                }).addTo(rotaLayerGroup);
+                bounds.extend(rotaPolyline.getBounds());
+            });
+            mapInstance.fitBounds(bounds, { padding: [40, 40] });
+        } else {
+            const bounds = L.latLngBounds([[latIni, lngIni], [latFim, lngFim]]);
+            mapInstance.fitBounds(bounds, { padding: [50, 50] });
+        }
+    }
+
+    function destacarRastroViagem(idx) {
+        if (!dadosAnaliseCache || !dadosAnaliseCache.viagens[idx]) return;
+        const v = dadosAnaliseCache.viagens[idx];
+        if (!v.rastro || v.rastro.length === 0) {
+            alert("Rastro de GPS não disponível para esta viagem.");
+            return;
+        }
+
+        rastroLayerGroup.clearLayers();
+
+        // Traçar polilinha do rastro real do ônibus
+        const rastroPoly = L.polyline(v.rastro, {
+            color: '#d97706',
+            weight: 5,
+            opacity: 0.9
+        }).addTo(rastroLayerGroup);
+
+        rastroPoly.bindPopup(`
+            <b>Viagem: ${v.placa}</b><br>
+            Início: ${v.inicio_hora}<br>
+            Fim: ${v.fim_hora}<br>
+            Duração: ${v.duracao_formatada}
+        `).openPopup();
+
+        mapInstance.fitBounds(rastroPoly.getBounds(), { padding: [50, 50] });
+
+        // Scroll até o mapa
+        document.getElementById('mapa-grade').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    async function exportarRelatorio(formato) {
+        if (!dadosAnaliseCache || !dadosAnaliseCache.viagens || dadosAnaliseCache.viagens.length === 0) {
+            alert("Nenhum dado disponível para exportação.");
+            return;
+        }
+
+        try {
+            const res = await fetch("{{ url_for('api_analise_grade_exportar') }}", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    formato: formato,
+                    viagens: dadosAnaliseCache.viagens,
+                    meta: dadosAnaliseCache.resumo
+                })
+            });
+
+            if (!res.ok) throw new Error("Falha ao gerar arquivo.");
+
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `analise_grade_${dadosAnaliseCache.resumo.data_consulta || 'relatorio'}.${formato === 'csv' ? 'csv' : 'xlsx'}`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (e) {
+            alert("Erro na exportação: " + e.message);
+        }
+    }
+</script>
+{% endblock %}

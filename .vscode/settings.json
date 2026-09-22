@@ -1,0 +1,9 @@
+{
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+    "chat.tools.terminal.autoApprove": {
+        "/^& 'C:/Users/Danilo/AppData/Local/Python/pythoncore-3\\.14-64/python\\.exe' -m unittest discover -s tests -p 'test_analise_grade\\.py' -v$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

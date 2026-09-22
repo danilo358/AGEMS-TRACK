@@ -3,103 +3,79 @@
 {% block content %}
 <div class="page-header">
     <div class="page-header-left">
-        <h1><i class="fa-solid fa-chart-pie"></i> Dashboard Operacional</h1>
-        <p class="page-subtitle">Bem-vindo, <strong>{{ email }}</strong> — visão geral da auditoria de frota</p>
+        <p class="eyebrow">Visão geral</p>
+        <h1>Dashboard operacional</h1>
+        <p class="page-subtitle">Acompanhamento da auditoria de frota para <strong>{{ email }}</strong>.</p>
     </div>
+    <a href="{{ url_for('exportar_ativos') }}" class="btn btn-secondary">
+        <i class="fa-solid fa-file-export"></i> Exportar veículos ativos
+    </a>
 </div>
 
-<!-- ── KPI Cards ─────────────────────────────────────────────────────────── -->
-<div class="stats-grid">
-
-    <!-- Card destaque: veículos ativos -->
-    <div class="stat-card stat-featured">
-        <div class="featured-title">
-            <i class="fa-solid fa-circle-check" style="color:#1a56db;margin-right:0.4rem;"></i>
-            Veículos Ativos com Vistoria em Dia
-        </div>
-        <div class="featured-row">
-            <div>
-                <div class="featured-item-value" style="color:#1a56db;">
-                    {{ dados.get('stats', {}).get('ativos_vistoria_total', 0) }}
-                </div>
-                <div class="featured-item-label">Total</div>
-            </div>
-            <div>
-                <div class="featured-item-value" style="color:#047857;">
-                    {{ dados.get('stats', {}).get('ativos_vistoria_com_rastreador', 0) }}
-                </div>
-                <div class="featured-item-label">Com Rastreador</div>
-            </div>
-            <div>
-                <div class="featured-item-value" style="color:#b91c1c;">
-                    {{ dados.get('stats', {}).get('ativos_vistoria_sem_rastreador', 0) }}
-                </div>
-                <div class="featured-item-label">Sem Rastreador</div>
-            </div>
-        </div>
+<section class="operational-summary" aria-labelledby="summary-title">
+    <div class="summary-heading">
         <div>
-            <a href="{{ url_for('exportar_ativos') }}" class="btn btn-excel">
-                <i class="fa-solid fa-file-excel"></i> Exportar para Excel
-            </a>
+            <p class="eyebrow">Situação da frota</p>
+            <h2 id="summary-title">Veículos com vistoria em dia</h2>
+        </div>
+        <span class="summary-status"><i class="fa-solid fa-circle-check"></i> Dados consolidados</span>
+    </div>
+    <div class="summary-metrics">
+        <div class="summary-metric">
+            <span>Total de veículos</span>
+            <strong>{{ dados.get('stats', {}).get('ativos_vistoria_total', 0) }}</strong>
+        </div>
+        <div class="summary-metric">
+            <span>Com rastreador</span>
+            <strong>{{ dados.get('stats', {}).get('ativos_vistoria_com_rastreador', 0) }}</strong>
+        </div>
+        <div class="summary-metric summary-metric-attention">
+            <span>Sem rastreador</span>
+            <strong>{{ dados.get('stats', {}).get('ativos_vistoria_sem_rastreador', 0) }}</strong>
         </div>
     </div>
+</section>
 
-    <!-- Instalação -->
-    <div class="stat-card stat-instalacao">
-        <div class="stat-label">Instalação</div>
-        <div class="stat-value">{{ dados.get('stats', {}).get('instalacao', 0) }}</div>
-        <div class="stat-footer">
-            <a href="{{ url_for('relatorio', tipo='instalacao') }}" class="stat-link">
-                Ver relatório <i class="fa-solid fa-arrow-right"></i>
-            </a>
+<section class="dashboard-section" aria-labelledby="services-title">
+    <div class="section-header">
+        <div>
+            <p class="eyebrow">Pendências por tipo</p>
+            <h2 id="services-title" class="section-title">Serviços em acompanhamento</h2>
         </div>
     </div>
-
-    <!-- Manutenção -->
-    <div class="stat-card stat-manutencao">
-        <div class="stat-label">Manutenção</div>
-        <div class="stat-value">{{ dados.get('stats', {}).get('manutencao', 0) }}</div>
-        <div class="stat-footer">
-            <a href="{{ url_for('relatorio', tipo='manutencao') }}" class="stat-link">
-                Ver relatório <i class="fa-solid fa-arrow-right"></i>
-            </a>
-        </div>
+    <div class="stats-grid">
+        <a href="{{ url_for('relatorio', tipo='instalacao') }}" class="stat-card stat-instalacao">
+            <span class="stat-icon"><i class="fa-solid fa-screwdriver-wrench"></i></span>
+            <span class="stat-label">Instalação</span>
+            <strong class="stat-value">{{ dados.get('stats', {}).get('instalacao', 0) }}</strong>
+            <span class="stat-link">Abrir relatório <i class="fa-solid fa-arrow-right"></i></span>
+        </a>
+        <a href="{{ url_for('relatorio', tipo='manutencao') }}" class="stat-card stat-manutencao">
+            <span class="stat-icon"><i class="fa-solid fa-wrench"></i></span>
+            <span class="stat-label">Manutenção</span>
+            <strong class="stat-value">{{ dados.get('stats', {}).get('manutencao', 0) }}</strong>
+            <span class="stat-link">Abrir relatório <i class="fa-solid fa-arrow-right"></i></span>
+        </a>
+        <a href="{{ url_for('relatorio', tipo='desinstalacao') }}" class="stat-card stat-desinstalacao">
+            <span class="stat-icon"><i class="fa-solid fa-circle-xmark"></i></span>
+            <span class="stat-label">Desinstalação</span>
+            <strong class="stat-value">{{ dados.get('stats', {}).get('desinstalacao', 0) }}</strong>
+            <span class="stat-link">Abrir relatório <i class="fa-solid fa-arrow-right"></i></span>
+        </a>
+        <a href="{{ url_for('relatorio', tipo='duplicadas') }}" class="stat-card stat-duplicadas">
+            <span class="stat-icon"><i class="fa-solid fa-clone"></i></span>
+            <span class="stat-label">Placas duplicadas</span>
+            <strong class="stat-value">{{ dados.get('stats', {}).get('duplicadas', 0) }}</strong>
+            <span class="stat-link">Abrir relatório <i class="fa-solid fa-arrow-right"></i></span>
+        </a>
+        <a href="{{ url_for('relatorio', tipo='inativacao_pendente') }}" class="stat-card stat-inativacao">
+            <span class="stat-icon"><i class="fa-solid fa-clock-rotate-left"></i></span>
+            <span class="stat-label">Inativação pendente</span>
+            <strong class="stat-value">{{ dados.get('stats', {}).get('inativacao_pendente', 0) }}</strong>
+            <span class="stat-link">Abrir relatório <i class="fa-solid fa-arrow-right"></i></span>
+        </a>
     </div>
-
-    <!-- Desinstalação -->
-    <div class="stat-card stat-desinstalacao">
-        <div class="stat-label">Desinstalação</div>
-        <div class="stat-value">{{ dados.get('stats', {}).get('desinstalacao', 0) }}</div>
-        <div class="stat-footer">
-            <a href="{{ url_for('relatorio', tipo='desinstalacao') }}" class="stat-link">
-                Ver relatório <i class="fa-solid fa-arrow-right"></i>
-            </a>
-        </div>
-    </div>
-
-    <!-- Placas Duplicadas -->
-    <div class="stat-card stat-duplicadas">
-        <div class="stat-label">Placas Duplicadas</div>
-        <div class="stat-value">{{ dados.get('stats', {}).get('duplicadas', 0) }}</div>
-        <div class="stat-footer">
-            <a href="{{ url_for('relatorio', tipo='duplicadas') }}" class="stat-link">
-                Ver relatório <i class="fa-solid fa-arrow-right"></i>
-            </a>
-        </div>
-    </div>
-
-    <!-- Inativação Pendente -->
-    <div class="stat-card stat-inativacao">
-        <div class="stat-label">Inativação Pendente</div>
-        <div class="stat-value">{{ dados.get('stats', {}).get('inativacao_pendente', 0) }}</div>
-        <div class="stat-footer">
-            <a href="{{ url_for('relatorio', tipo='inativacao_pendente') }}" class="stat-link">
-                Ver relatório <i class="fa-solid fa-arrow-right"></i>
-            </a>
-        </div>
-    </div>
-
-</div>
+</section>
 
 <!-- ── Resumo por Empresa ────────────────────────────────────────────────── -->
 <div class="card">

@@ -57,7 +57,7 @@
             <tbody>
                 {% for v in veiculos %}
                 <tr>
-                    <td><strong style="color:#111827;letter-spacing:0.02em;">{{ v.placa }}</strong></td>
+                    <td><strong class="vehicle-plate">{{ v.placa }}</strong></td>
                     <td style="color:#6b7280;">{{ v.prefixo or '—' }}</td>
                     <td style="font-size:0.82rem;max-width:180px;">{{ v.empresa }}</td>
                     <td style="font-size:0.82rem;color:#6b7280;white-space:nowrap;">{{ v.ultima_comunicacao or '—' }}</td>

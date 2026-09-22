@@ -563,12 +563,17 @@ td {
     vertical-align: middle;
 }
 
+.vehicle-plate {
+    color: var(--text-heading);
+    letter-spacing: 0.02em;
+}
+
 tbody tr { transition: background var(--t-fast); }
 tbody tr:hover { background: var(--bg-alt); }
 tbody tr:last-child td { border-bottom: none; }
 
 .company-header {
-    background: #f1f5f9;
+    background: var(--bg-alt);
     padding: 0.6rem 1rem;
     font-size: 0.9rem;
     font-weight: 700;
@@ -985,10 +990,18 @@ textarea { resize: vertical; }
 
 /* Inline values in legacy report templates retain readable contrast in dark mode. */
 :root[data-theme="dark"] td[style*="color:#111827"] { color: var(--text-heading) !important; }
+:root[data-theme="dark"] strong[style*="color:#111827"] { color: var(--text-heading) !important; }
 :root[data-theme="dark"] td[style*="color:#1a56db"],
 :root[data-theme="dark"] span[style*="color:#1a56db"] { color: #93c5fd !important; }
 :root[data-theme="dark"] td[style*="color:#b45309"] { color: #fcd34d !important; }
 :root[data-theme="dark"] td[style*="color:#b91c1c"] { color: #fda4af !important; }
+:root[data-theme="dark"] [style*="color:#047857"] { color: var(--success) !important; }
+:root[data-theme="dark"] [style*="color:#b91c1c"] { color: var(--danger) !important; }
+:root[data-theme="dark"] [style*="color:#1a56db"] { color: var(--primary) !important; }
+:root[data-theme="dark"] [style*="color:#374151"] { color: var(--text-body) !important; }
+:root[data-theme="dark"] [style*="color:#6b7280"] { color: var(--text-muted) !important; }
+:root[data-theme="dark"] [style*="color:#9ca3af"] { color: var(--text-faint) !important; }
+:root[data-theme="dark"] .company-header i[style*="color:#6b7280"] { color: var(--text-muted) !important; }
 :root[data-theme="dark"] textarea,
 :root[data-theme="dark"] input,
 :root[data-theme="dark"] select { background-color: var(--bg-alt) !important; color: var(--text-heading) !important; border-color: var(--border-base) !important; }

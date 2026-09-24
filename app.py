@@ -1,6 +1,9 @@
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, date
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, make_response, send_file
@@ -21,6 +24,35 @@ from zoneinfo import ZoneInfo
 # =========================================================
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
+
+
+_external_http = requests.Session()
+_external_http.mount(
+    "https://",
+    HTTPAdapter(
+        max_retries=Retry(
+            total=3,
+            connect=3,
+            read=3,
+            status=3,
+            backoff_factor=1,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset({"POST", "GET"}),
+            respect_retry_after_header=True,
+        )
+    ),
+)
+
+
+def post_external(url, **kwargs):
+    """POST resiliente para APIs externas que encerram conexões intermitentemente."""
+    try:
+        return _external_http.post(url, **kwargs)
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+        # O adaptador cobre a maioria dos resets; uma pausa adicional evita
+        # insistir imediatamente quando o upstream está encerrando conexões.
+        time.sleep(2)
+        return _external_http.post(url, **kwargs)
 
 def carregar_env_local():
     env_path = Path(__file__).with_name(".env")
@@ -302,7 +334,7 @@ def login_systemsat():
         raise RuntimeError("Defina SYSTEMSAT_HASH_AUTH, SYSTEMSAT_USERNAME e SYSTEMSAT_PASSWORD.")
     url = "https://integration.systemsatx.com.br/Login"
     headers = { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" }
-    res = requests.post(url, params={"HashAuth": hash_auth, "Username": username, "Password": password}, headers=headers, timeout=15)
+    res = post_external(url, params={"HashAuth": hash_auth, "Username": username, "Password": password}, headers=headers, timeout=15)
     res.raise_for_status()
     return res.json().get("AccessToken")
 
@@ -329,7 +361,7 @@ def buscar_todos_veiculos(token):
           }
         }"""
     }
-    res = requests.post(url_vistoria, json=payload, headers=headers, timeout=30)
+    res = post_external(url_vistoria, json=payload, headers=headers, timeout=30)
     res.raise_for_status()
     resposta = res.json()
     resultado = resposta.get("data", {}).get("buscarRelatorioVeiculos")
@@ -399,7 +431,7 @@ def buscar_empresas_com_pasta_valida(token):
             }"""
         }
         try:
-            res = requests.post(url, json=payload, headers=headers, timeout=30)
+            res = post_external(url, json=payload, headers=headers, timeout=30)
             res.raise_for_status()
             resposta = res.json()
             buscar_pastas_node = resposta.get("data", {}).get("buscarPastas") or {}
@@ -476,7 +508,7 @@ def buscar_pedidos_desativacao(token):
             "variables": {"paging": paging_param, "veiculo": "%%"},
             "query": query
         }
-        resposta_http = requests.post(url_vistoria, json=payload, headers=headers, timeout=30)
+        resposta_http = post_external(url_vistoria, json=payload, headers=headers, timeout=30)
         resposta_http.raise_for_status()
         res = resposta_http.json()
         solic_node = res.get("data", {}).get("solicitacoesAtivacoesDesativacoesVeiculos", {})
@@ -559,7 +591,7 @@ def buscar_posicoes_rastreadores(token_systemsat):
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     headers["Authorization"] = f"Bearer {token}"
-    resposta_http = requests.post(url, json={"ClientIntegrationCode": "55"}, headers=headers, timeout=30)
+    resposta_http = post_external(url, json={"ClientIntegrationCode": "55"}, headers=headers, timeout=30)
     resposta_http.raise_for_status()
     res = resposta_http.json()
     if not isinstance(res, list) or not res:
@@ -757,10 +789,25 @@ def gerar_relatorios_completos(token_agems, token_sys):
         def log(msg): _report_status["log"].append(msg)
 
         log("🔍 Carregando dados da AGEMS e SystemSat...")
-        veiculos = buscar_todos_veiculos(token_agems)
-        empresas_regulares = buscar_empresas_regulares(token_agems)
-        pedidos_desativacao = buscar_pedidos_desativacao(token_agems)
-        rastreadores = buscar_posicoes_rastreadores(token_sys)
+        def carregar(nome, func):
+            try:
+                return func()
+            except requests.exceptions.RequestException as exc:
+                raise RuntimeError(f"Falha ao consultar {nome}: {exc}") from exc
+
+        veiculos = carregar("a lista de veículos da AGEMS", lambda: buscar_todos_veiculos(token_agems))
+        empresas_regulares = carregar(
+            "as empresas regulares da AGEMS",
+            lambda: buscar_empresas_regulares(token_agems),
+        )
+        pedidos_desativacao = carregar(
+            "as solicitações de desativação da AGEMS",
+            lambda: buscar_pedidos_desativacao(token_agems),
+        )
+        rastreadores = carregar(
+            "as últimas posições do SystemSat",
+            lambda: buscar_posicoes_rastreadores(token_sys),
+        )
 
         data_hoje_dt = agora_utc()
         data_hoje_date = data_hoje_dt.date()
